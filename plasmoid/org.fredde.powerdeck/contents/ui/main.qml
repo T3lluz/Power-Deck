@@ -142,7 +142,7 @@ PlasmoidItem {
             burst: "sweep"
         },
         "performance": {
-            label: i18n("TURBO"),
+            label: i18n("PERFORMANCE"),
             name: i18n("Performance"),
             desc: i18n("Max performance"),
             icon: Qt.resolvedUrl("../images/performance.svg"),
