@@ -1,0 +1,18 @@
+[Unit]
+Description=Power Deck: commit queued GPU mode to supergfxd config
+# Ordered Before=supergfxd so that at boot ExecStart commits the staged
+# mode before the daemon reads its config, and at shutdown ExecStop runs
+# after the daemon has fully stopped. supergfxd must never see the config
+# change while running: it would attempt a live driver unload, which
+# wedges in the kernel and hangs the next reboot.
+Before=supergfxd.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/power-mode gfx-commit
+ExecStop=/usr/local/bin/power-mode gfx-commit
+
+[Install]
+WantedBy=multi-user.target

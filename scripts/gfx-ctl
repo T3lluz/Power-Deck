@@ -1,50 +1,152 @@
 #!/usr/bin/env bash
-# gfx-ctl — supergfxctl wrapper for the Power Deck widget.
+# gfx-ctl — graphics mode control for the Power Deck widget.
 #
 # Usage:
-#   gfx-ctl status       print "<current> <pending-mode> <pending-action> <supported,csv>"
-#   gfx-ctl set <Mode>   switch graphics mode (Integrated, Hybrid, ...)
+#   gfx-ctl status       print "<live> <pending-mode> <pending-action> <supported,csv> <policy> <dgpu>"
+#   gfx-ctl set <Mode>   queue a graphics mode for the next boot; prints
+#                        the required user action ("reboot") on success
 #
-# Pending fields are normalized to: none|logout|reboot|<raw>.
+# Why this does NOT use `supergfxctl -m`:
+#   Even with always_reboot enabled, supergfxd reacts to -m by trying a
+#   LIVE switch first (kill apps, rmmod nvidia_drm). With a desktop
+#   session holding the driver that rmmod always fails, and the daemon
+#   then wedges on a PCI unbind in uninterruptible kernel state — the
+#   process survives SIGKILL and the next reboot hangs on a black
+#   screen until a forced power-off.
+#
+#   Editing /etc/supergfxd.conf directly while the daemon runs is not
+#   safe either: supergfxd has Restart=always, and on any restart it
+#   live-applies whatever the config says — same wedge. So `set` only
+#   STAGES the mode (power-mode root helper writes it to
+#   /var/lib/power-deck/gfx-pending); power-deck-gfx-apply.service
+#   commits it into the config at shutdown/early boot while supergfxd
+#   is not running, and the daemon applies it cleanly when it starts.
+#
+# <live> is detected from the hardware, not from supergfxctl -g (which
+# reports the *configured* mode, i.e. what will run after reboot). The
+# configured mode is reported as <pending-mode> until it matches what is
+# actually running. <dgpu> is off|asleep|active (asleep = D3, ~0 W).
+#
+# The supported-modes list needs a round-trip to the daemon, which can
+# be unresponsive; the last good answer is cached so status keeps
+# working (everything else is read from sysfs and the config file).
 set -u
 
+CONF=/etc/supergfxd.conf
+PENDING=/var/lib/power-deck/gfx-pending
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/power-deck"
+SUP_CACHE="$CACHE_DIR/gfx-supported"
+
 have_supergfx() {
-    command -v supergfxctl >/dev/null 2>&1 && systemctl is-active -q supergfxd 2>/dev/null
+    command -v supergfxctl >/dev/null 2>&1 && [ -f "$CONF" ]
 }
 
-norm() {
-    case "${1:-}" in
-        ""|Unknown|None|"No action required") echo none ;;
-        *[Rr]eboot*)  echo reboot ;;
-        *[Ll]ogout*)  echo logout ;;
-        *)            echo "$1" ;;
+# The daemon can block indefinitely while wedged, so every query gets a
+# hard timeout to keep the widget's status polls from hanging.
+sgfx() {
+    timeout 3 supergfxctl "$@" 2>/dev/null
+}
+
+conf_mode() {
+    sed -n 's/.*"mode": "\([A-Za-z]*\)".*/\1/p' "$CONF" 2>/dev/null | head -n1
+}
+
+supported_modes() {
+    local sup
+    sup="$(sgfx -s | tr -d '[] ')"
+    if [ -n "$sup" ]; then
+        mkdir -p "$CACHE_DIR" 2>/dev/null
+        printf '%s\n' "$sup" > "$SUP_CACHE" 2>/dev/null
+        echo "$sup"
+        return 0
+    fi
+    if [ -s "$SUP_CACHE" ]; then
+        head -n1 "$SUP_CACHE"
+        return 0
+    fi
+    echo none
+}
+
+# First NVIDIA VGA/3D controller on the PCI bus (absent in Integrated
+# mode, where supergfxd removes the device entirely at boot).
+nvidia_gpu_dev() {
+    local dev
+    for dev in /sys/bus/pci/devices/*; do
+        [ "$(cat "$dev/vendor" 2>/dev/null)" = "0x10de" ] || continue
+        case "$(cat "$dev/class" 2>/dev/null)" in 0x03*) echo "$dev"; return 0 ;; esac
+    done
+    return 1
+}
+
+# The mode that is actually running right now, from hardware facts:
+#   internal panel wired to the NVIDIA card -> MUX dGPU mode
+#   NVIDIA GPU present on the bus           -> Hybrid
+#   no NVIDIA GPU on the bus                -> Integrated
+# Advanced Optimus panels expose an eDP connector on BOTH cards, so only
+# the one that is actually connected counts.
+live_mode() {
+    local link card
+    for link in /sys/class/drm/card*-eDP-*; do
+        [ -e "$link" ] || continue
+        [ "$(cat "$link/status" 2>/dev/null)" = "connected" ] || continue
+        card="${link%-eDP-*}"
+        if [ "$(cat "$card/device/vendor" 2>/dev/null)" = "0x10de" ]; then
+            echo AsusMuxDgpu
+            return 0
+        fi
+    done
+    if nvidia_gpu_dev >/dev/null; then
+        echo Hybrid
+    else
+        echo Integrated
+    fi
+}
+
+dgpu_state() {
+    local dev
+    dev="$(nvidia_gpu_dev)" || { echo off; return 0; }
+    case "$(cat "$dev/power_state" 2>/dev/null)" in
+        D0) echo active ;;
+        *)  echo asleep ;;
     esac
 }
 
 case "${1:-status}" in
     status)
         if ! have_supergfx; then
-            echo "none none none none"
+            echo "none none none none none off"
             exit 0
         fi
-        cur="$(supergfxctl -g 2>/dev/null)"
-        [ -n "$cur" ] || cur=none
-        pmode="$(norm "$(supergfxctl -P 2>/dev/null)")"
-        pact="$(norm "$(supergfxctl -p 2>/dev/null)")"
-        sup="$(supergfxctl -s 2>/dev/null | tr -d '[] ')"
-        [ -n "$sup" ] || sup=none
-        echo "$cur $pmode $pact $sup"
+        live="$(live_mode)"
+        # a staged mode (not yet committed to the config) takes priority;
+        # a config/live mismatch covers the window right after the
+        # shutdown commit and legacy direct config edits
+        pend=""
+        [ -s "$PENDING" ] && pend="$(head -n1 "$PENDING" 2>/dev/null)"
+        [ -n "$pend" ] || pend="$(conf_mode)"
+        if [ -n "$pend" ] && [ "$pend" != "$live" ]; then
+            pmode="$pend"
+            pact=reboot
+        else
+            pmode=none
+            pact=none
+        fi
+        echo "$live $pmode $pact $(supported_modes) reboot $(dgpu_state)"
         ;;
     set)
-        if [ -z "${2:-}" ]; then
-            echo "usage: gfx-ctl set <Mode>" >&2
-            exit 1
-        fi
+        case "${2:-}" in
+            Integrated|Hybrid|AsusMuxDgpu|AsusEgpu|Vfio) ;;
+            *) echo "usage: gfx-ctl set Integrated|Hybrid|AsusMuxDgpu|AsusEgpu|Vfio" >&2; exit 1 ;;
+        esac
         if ! have_supergfx; then
             echo "supergfxctl/supergfxd not available" >&2
             exit 1
         fi
-        supergfxctl -m "$2"
+        if ! sudo -n /usr/local/bin/power-mode gfx-mode "$2" 2>&1; then
+            echo "failed to write graphics mode to $CONF" >&2
+            exit 1
+        fi
+        echo reboot
         ;;
     *)
         echo "usage: gfx-ctl status|set <Mode>" >&2

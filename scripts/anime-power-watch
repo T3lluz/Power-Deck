@@ -14,6 +14,14 @@ sync() {
     "$REFRESH_CTL" sync >/dev/null 2>&1
 }
 
+# The udev burst can arrive before the AC adapter's "online" attribute
+# settles, so a single sync may act on stale state. Run a second pass
+# shortly after to catch the final state.
+sync_twice() {
+    sync
+    ( sleep 2; sync ) &
+}
+
 # Initial sync so state is correct at login.
 sync
 
@@ -23,7 +31,7 @@ if command -v udevadm >/dev/null 2>&1; then
     while read -r _; do
         # Coalesce event bursts (plug/unplug emits several events at once).
         while read -r -t 1 _; do :; done
-        sync
+        sync_twice
     done
 fi
 
@@ -35,7 +43,7 @@ while :; do
     done | head -1)
     if [ "$cur" != "$prev" ]; then
         prev="$cur"
-        sync
+        sync_twice
     fi
     sleep 2
 done

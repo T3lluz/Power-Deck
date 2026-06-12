@@ -113,16 +113,21 @@ if [ "$ACTION" = "uninstall" ]; then
             step "power-mode root helper"
             if [[ "$reply" =~ ^[Nn] ]]; then
                 skipped
-            elif sudo rm -f /usr/local/bin/power-mode /etc/sudoers.d/power-mode < /dev/tty; then
+            elif sudo sh -c 'systemctl disable --now power-deck-gfx-apply.service 2>/dev/null;
+                rm -f /usr/local/bin/power-mode /etc/sudoers.d/power-mode \
+                    /etc/systemd/system/power-deck-gfx-apply.service;
+                rm -rf /var/lib/power-deck; systemctl daemon-reload' < /dev/tty; then
                 ok
             else
                 warn "sudo removal failed — remove manually:
-      sudo rm -f /usr/local/bin/power-mode /etc/sudoers.d/power-mode"
+      sudo systemctl disable --now power-deck-gfx-apply.service
+      sudo rm -f /usr/local/bin/power-mode /etc/sudoers.d/power-mode /etc/systemd/system/power-deck-gfx-apply.service"
             fi
         else
             step "power-mode root helper"
             warn "no terminal for sudo — remove manually:
-      sudo rm -f /usr/local/bin/power-mode /etc/sudoers.d/power-mode"
+      sudo systemctl disable --now power-deck-gfx-apply.service
+      sudo rm -f /usr/local/bin/power-mode /etc/sudoers.d/power-mode /etc/systemd/system/power-deck-gfx-apply.service"
         fi
     else
         step "power-mode root helper"
@@ -304,22 +309,32 @@ else
 fi
 
 # ---------- optional root helper (Extreme mode) ----------
-section "Root helper (Extreme mode extras)"
+section "Root helper (Extreme mode + GPU switching)"
 
+# The gfx-apply unit commits a queued GPU mode into /etc/supergfxd.conf
+# at shutdown/early boot, while supergfxd is not running — changing the
+# config under a live daemon makes it attempt an unsafe live switch.
 install_root_helper() {
     run sudo install -m 755 "${REPO_ROOT}/system/power-mode" /usr/local/bin/power-mode \
-        && run sudo install -m 440 "${REPO_ROOT}/system/power-mode.sudoers" /etc/sudoers.d/power-mode
+        && run sudo install -m 440 "${REPO_ROOT}/system/power-mode.sudoers" /etc/sudoers.d/power-mode \
+        && run sudo install -m 644 "${REPO_ROOT}/system/power-deck-gfx-apply.service" \
+            /etc/systemd/system/power-deck-gfx-apply.service \
+        && run sudo systemctl daemon-reload \
+        && run sudo systemctl enable --now power-deck-gfx-apply.service
 }
 
 # /etc/sudoers.d is not readable as a normal user, so probe with sudo -n -l
 # (succeeds without a password when the sudoers entry is in place).
 # An installed helper still gets refreshed when the repo version changed.
 if [ -f /usr/local/bin/power-mode ] && sudo -n -l /usr/local/bin/power-mode normal >/dev/null 2>&1 \
-    && cmp -s "${REPO_ROOT}/system/power-mode" /usr/local/bin/power-mode; then
+    && cmp -s "${REPO_ROOT}/system/power-mode" /usr/local/bin/power-mode \
+    && cmp -s "${REPO_ROOT}/system/power-deck-gfx-apply.service" \
+        /etc/systemd/system/power-deck-gfx-apply.service \
+    && systemctl is-enabled -q power-deck-gfx-apply.service 2>/dev/null; then
     step "power-mode already installed"
     ok
 elif { true < /dev/tty; } 2>/dev/null; then
-    printf '  %s\n' "${C_DIM}Extreme mode needs a small root helper (Wi-Fi/PCIe powersave, dGPU runtime suspend).${C_RESET}"
+    printf '  %s\n' "${C_DIM}Extreme mode and GPU mode switching need a small root helper (powersave knobs, supergfxd config).${C_RESET}"
     printf '  %s' "${C_BOLD}Install it now with sudo? [Y/n] ${C_RESET}"
     read -r reply < /dev/tty || reply="n"
     if [[ "$reply" =~ ^[Nn] ]]; then
@@ -340,7 +355,9 @@ elif { true < /dev/tty; } 2>/dev/null; then
     fi
 elif command -v pkexec >/dev/null 2>&1 \
     && run pkexec sh -c "install -m 755 '${REPO_ROOT}/system/power-mode' /usr/local/bin/power-mode \
-        && install -m 440 '${REPO_ROOT}/system/power-mode.sudoers' /etc/sudoers.d/power-mode"; then
+        && install -m 440 '${REPO_ROOT}/system/power-mode.sudoers' /etc/sudoers.d/power-mode \
+        && install -m 644 '${REPO_ROOT}/system/power-deck-gfx-apply.service' /etc/systemd/system/power-deck-gfx-apply.service \
+        && systemctl daemon-reload && systemctl enable --now power-deck-gfx-apply.service"; then
     # No terminal for sudo (e.g. run from a GUI) — polkit shows a graphical
     # authentication dialog instead.
     step "power-mode root helper (via polkit)"
@@ -348,6 +365,25 @@ elif command -v pkexec >/dev/null 2>&1 \
 else
     step "power-mode root helper"
     warn "no terminal available for sudo — install manually for Extreme mode (see README)"
+fi
+
+# ---------- supergfxd reboot policy (GPU mode switching) ----------
+# supergfxd's logout detection is broken with current systemd ("manager is
+# an invalid variant"): logout-type switches silently time out and revert.
+# always_reboot makes every switch persist to config and apply at next
+# boot, which is the only reliable behavior — the widget adapts to it.
+if [ -f /etc/supergfxd.conf ] && grep -q '"always_reboot": false' /etc/supergfxd.conf 2>/dev/null; then
+    SGFX_CMD='sed -i "s/\"always_reboot\": false/\"always_reboot\": true/" /etc/supergfxd.conf && systemctl try-restart supergfxd'
+    step "supergfxd: apply GPU mode at reboot"
+    if { true < /dev/tty; } 2>/dev/null && sudo -v < /dev/tty 2>/dev/null \
+        && run sudo sh -c "$SGFX_CMD"; then
+        ok
+    elif command -v pkexec >/dev/null 2>&1 && run pkexec sh -c "$SGFX_CMD"; then
+        ok
+    else
+        warn "could not enable always_reboot in /etc/supergfxd.conf — GPU mode
+      switches may silently revert (supergfxd logout detection is unreliable)"
+    fi
 fi
 
 # ---------- restart plasma ----------

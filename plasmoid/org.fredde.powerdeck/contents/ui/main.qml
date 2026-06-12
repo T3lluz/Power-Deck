@@ -123,6 +123,11 @@ PlasmoidItem {
     property string gfxPendingMode: "none"
     property string gfxPendingAction: "none"
     property var gfxSupported: []
+    // dGPU hardware state: "off" (not on the bus), "asleep" (D3, ~0 W)
+    // or "active" (D0, drawing power)
+    property string gfxDgpu: "off"
+    // how mode changes apply: "reboot" (always_reboot) or "logout"
+    property string gfxPolicy: "reboot"
     // mode awaiting user confirmation in the overlay dialog
     property string gfxTarget: ""
     // last mode actually submitted, for the success notification
@@ -130,6 +135,29 @@ PlasmoidItem {
     // true while a mode switch is in flight: the pending state is shown
     // optimistically and polls must not overwrite it with stale data
     property bool gfxSwitching: false
+    // whether the user asked to log out / reboot as soon as the switch
+    // command succeeds
+    property bool gfxActNow: false
+    // true while undoing a queued (not yet applied) mode switch
+    property bool gfxCancelling: false
+
+    // gfx-ctl queues the mode in supergfxd's config, which is applied
+    // when the daemon starts at the next boot — every change is a reboot
+    function gfxActionFor(mode) {
+        if (gfxPolicy === "reboot") return "reboot"
+        return (mode === "AsusMuxDgpu" || gfxMode === "AsusMuxDgpu") ? "reboot" : "logout"
+    }
+
+    function gfxPerformAction(action) {
+        if (action === "reboot") {
+            execDataSource.connectSource("systemctl reboot")
+        } else {
+            // KDE logout without confirmation; loginctl as a fallback
+            execDataSource.connectSource(
+                "qdbus6 org.kde.Shutdown /Shutdown org.kde.Shutdown.logout"
+                + " || loginctl terminate-session ''")
+        }
+    }
 
     property string refreshMode: "high"
     property int refreshLowHz: 60
@@ -260,15 +288,35 @@ PlasmoidItem {
             // Mode switches need explicit success/failure feedback, unlike
             // the fire-and-forget status polls below.
             if (sourceName.indexOf("gfx-ctl set") !== -1) {
-                root.gfxSwitching = false
                 if (data["exit code"] === 0) {
-                    root.notify(i18n("GPU mode: %1", root.gfxLabel(root.gfxTargetApplied)),
-                        i18n("Reboot to apply the new graphics mode"))
+                    if (root.gfxCancelling) {
+                        root.gfxCancelling = false
+                        root.gfxSwitching = false
+                        root.notify(i18n("GPU mode switch cancelled"),
+                            i18n("Staying on %1", root.gfxLabel(root.gfxMode)))
+                    } else {
+                        // the script prints the action required to apply
+                        var action = (data["stdout"] || "").trim()
+                        if (action === "logout" || action === "reboot" || action === "none") {
+                            root.gfxPendingAction = action
+                        }
+                        if (root.gfxActNow && root.gfxPendingAction !== "none") {
+                            root.gfxPerformAction(root.gfxPendingAction)
+                        } else {
+                            root.gfxSwitching = false
+                            root.notify(i18n("GPU mode queued: %1", root.gfxLabel(root.gfxTargetApplied)),
+                                i18n("Applies at the next reboot"))
+                        }
+                    }
                 } else {
-                    // roll back the optimistic pending state
+                    // roll back the optimistic pending state; the status
+                    // poll below restores whatever is really configured
+                    root.gfxCancelling = false
+                    root.gfxSwitching = false
                     root.gfxPendingMode = "none"
+                    root.gfxPendingAction = "none"
                     root.notify(i18n("GPU mode switch failed"),
-                        i18n("Check that supergfxd is running"))
+                        i18n("Could not write the supergfxd config"))
                 }
                 connectSource(root.gfxScriptPath + " status")
                 disconnectSource(sourceName)
@@ -353,6 +401,10 @@ PlasmoidItem {
                         root.batteryWatts = isNaN(bw) ? -1 : bw
                         var nowAC = (bparts[3] === "1")
                         if (root.acKnown && nowAC !== root.onAC) {
+                            // re-apply AC-dependent settings right away as a
+                            // backstop for the udev watcher service
+                            execDataSource.connectSource(root.refreshScriptPath + " sync")
+                            execDataSource.connectSource(root.animeScriptPath + " sync")
                             if (nowAC) {
                                 root.notify(i18n("Plugged in"),
                                     root.batteryPercent >= 0
@@ -382,7 +434,20 @@ PlasmoidItem {
                                 root.gfxPendingMode = gparts[1]
                                 root.gfxPendingAction = gparts[2]
                             }
-                            root.gfxSupported = (gparts[3] === "none") ? [] : gparts[3].split(",")
+                            // "none" with a live mode means the daemon query
+                            // failed AND the cache was lost — keep the last
+                            // known list instead of hiding the section
+                            if (gparts[3] !== "none") {
+                                root.gfxSupported = gparts[3].split(",")
+                            } else if (gparts[0] === "none") {
+                                root.gfxSupported = []
+                            }
+                            if (gparts.length >= 5 && (gparts[4] === "reboot" || gparts[4] === "logout")) {
+                                root.gfxPolicy = gparts[4]
+                            }
+                            if (gparts.length >= 6) {
+                                root.gfxDgpu = gparts[5]
+                            }
                         }
                     }
                 } else if (sourceName.indexOf("charge-ctl") !== -1) {
@@ -484,16 +549,25 @@ PlasmoidItem {
             i18n("Charging to 100% once — the %1% limit returns afterwards", chargeLimit))
     }
 
-    function applyGfxMode(mode, rebootAfter) {
+    function applyGfxMode(mode, actNow) {
         gfxTarget = ""
         gfxTargetApplied = mode
-        // supergfxctl -m can take several seconds; reflect the pending
-        // state immediately instead of waiting for the next status poll
+        gfxActNow = actNow
+        // reflect the pending state immediately instead of waiting for
+        // the next status poll
         gfxSwitching = true
         gfxPendingMode = mode
-        var cmd = gfxScriptPath + " set " + mode
-        if (rebootAfter) cmd += " && systemctl reboot"
-        execDataSource.connectSource(cmd)
+        gfxPendingAction = gfxActionFor(mode)
+        execDataSource.connectSource(gfxScriptPath + " set " + mode)
+    }
+
+    // undo a queued switch by writing the live mode back into the config
+    function cancelGfxPending() {
+        gfxCancelling = true
+        gfxSwitching = true
+        gfxPendingMode = "none"
+        gfxPendingAction = "none"
+        execDataSource.connectSource(gfxScriptPath + " set " + gfxMode)
     }
 
     function setRefreshMode(mode) {
@@ -781,12 +855,42 @@ PlasmoidItem {
 
                     PC3.Label {
                         visible: root.gfxPendingMode !== "none" || root.gfxPendingAction !== "none"
-                        text: root.gfxPendingMode !== "none"
-                            ? i18n("%1 after reboot", root.gfxLabel(root.gfxPendingMode))
-                            : i18n("Reboot to apply")
+                        text: {
+                            var act = root.gfxPendingAction === "reboot" ? i18n("reboot") : i18n("logout")
+                            return root.gfxPendingMode !== "none"
+                                ? i18n("%1 after %2", root.gfxLabel(root.gfxPendingMode), act)
+                                : i18n("Apply with %1", act)
+                        }
                         color: Theme.amber
                         font.weight: Font.DemiBold
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                    }
+
+                    // which GPU devices are live right now: green/teal when
+                    // only the iGPU draws power, amber when the dGPU is awake
+                    Rectangle {
+                        readonly property color tagColor: root.gfxDgpu === "active" ? Theme.amber : Theme.teal
+                        readonly property string tagText: {
+                            if (root.gfxMode === "AsusMuxDgpu") return i18n("dGPU drives display")
+                            if (root.gfxDgpu === "off") return i18n("iGPU only")
+                            if (root.gfxDgpu === "active") return i18n("iGPU + dGPU on")
+                            return i18n("iGPU + dGPU asleep")
+                        }
+                        implicitWidth: tagLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
+                        implicitHeight: tagLabel.implicitHeight + Kirigami.Units.smallSpacing
+                        radius: height / 2
+                        color: Theme.alpha(tagColor, 0.14)
+                        border.width: 1
+                        border.color: Theme.alpha(tagColor, 0.45)
+
+                        PC3.Label {
+                            id: tagLabel
+                            anchors.centerIn: parent
+                            text: parent.tagText
+                            color: parent.tagColor
+                            font.weight: Font.DemiBold
+                            font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.92)
+                        }
                     }
                 }
 
@@ -808,36 +912,48 @@ PlasmoidItem {
                             pulsing: isPending
                             isActive: isPending || root.gfxMode === modelData
                             onClicked: {
-                                if (modelData !== root.gfxMode && modelData !== root.gfxPendingMode) {
-                                    root.gfxTarget = modelData
+                                if (modelData === root.gfxPendingMode) {
+                                    return
                                 }
+                                if (modelData === root.gfxMode) {
+                                    // clicking the live mode while a switch is
+                                    // queued un-queues it
+                                    if (root.gfxPendingMode !== "none") {
+                                        root.cancelGfxPending()
+                                    }
+                                    return
+                                }
+                                root.gfxTarget = modelData
                             }
                         }
                     }
                 }
 
-                // one-click reboot with an arm step so a stray click is harmless
+                // one-click apply with an arm step so a stray click is harmless
                 AnimeChip {
-                    id: rebootChip
+                    id: applyChip
                     property bool armed: false
+                    readonly property bool needsReboot: root.gfxPendingAction === "reboot"
                     visible: root.gfxPendingMode !== "none" || root.gfxPendingAction !== "none"
-                    label: armed ? i18n("Click again to reboot") : i18n("Reboot now to apply")
+                    label: armed
+                        ? (needsReboot ? i18n("Click again to reboot") : i18n("Click again to log out"))
+                        : (needsReboot ? i18n("Reboot now to apply") : i18n("Log out now to apply"))
                     accentColor: armed ? Theme.red : Theme.amber
                     isActive: armed
                     pulsing: armed
                     onClicked: {
                         if (armed) {
-                            execDataSource.connectSource("systemctl reboot")
+                            root.gfxPerformAction(root.gfxPendingAction)
                         } else {
                             armed = true
-                            rebootArmTimer.restart()
+                            applyArmTimer.restart()
                         }
                     }
 
                     Timer {
-                        id: rebootArmTimer
+                        id: applyArmTimer
                         interval: 4000
-                        onTriggered: rebootChip.armed = false
+                        onTriggered: applyChip.armed = false
                     }
                 }
             }
@@ -1178,6 +1294,11 @@ PlasmoidItem {
                         font.letterSpacing: 2.2
                     }
 
+                    // logout-type switches must end the session while
+                    // supergfxd waits, so "later" is only safe for MUX
+                    readonly property bool needsReboot:
+                        root.gfxTarget !== "" && root.gfxActionFor(root.gfxTarget) === "reboot"
+
                     PC3.Label {
                         Layout.fillWidth: true
                         text: i18n("Switch graphics to %1?", root.gfxLabel(root.gfxTarget))
@@ -1189,7 +1310,9 @@ PlasmoidItem {
 
                     PC3.Label {
                         Layout.fillWidth: true
-                        text: i18n("The new mode takes effect after the next reboot. Nothing changes if you cancel.")
+                        text: confirmColumn.needsReboot
+                            ? i18n("The new mode takes effect after the next reboot. Until then you can un-queue it by clicking the current mode.")
+                            : i18n("Your session will close and the new mode is active when you log back in. Save your work first — nothing changes if you cancel.")
                         color: Kirigami.Theme.disabledTextColor
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                         wrapMode: Text.WordWrap
@@ -1198,7 +1321,9 @@ PlasmoidItem {
                     AnimeChip {
                         Layout.fillWidth: true
                         Layout.topMargin: Kirigami.Units.smallSpacing
-                        label: i18n("Switch + Reboot now")
+                        label: confirmColumn.needsReboot
+                            ? i18n("Switch + Reboot now")
+                            : i18n("Switch + Log out now")
                         accentColor: Theme.red
                         isActive: true
                         onClicked: root.applyGfxMode(root.gfxTarget, true)
@@ -1206,6 +1331,7 @@ PlasmoidItem {
 
                     AnimeChip {
                         Layout.fillWidth: true
+                        visible: confirmColumn.needsReboot
                         label: i18n("Switch, reboot later")
                         accentColor: Theme.amber
                         isActive: true

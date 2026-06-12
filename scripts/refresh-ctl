@@ -107,13 +107,30 @@ desired() {
     esac
 }
 
+# apply with verification: kscreen-doctor can fail or be ignored when a
+# modeset races with compositor work (e.g. right after AC plug/unplug or
+# a profile switch), so confirm the panel actually changed and retry.
+apply_verified() {
+    local want="$1" tries name low_id low_hz high_id high_hz cur_id cur_hz target
+    for tries in 1 2 3; do
+        apply "$want"
+        read -r name low_id low_hz high_id high_hz cur_id cur_hz <<< "$(panel_info)"
+        [ -n "$name" ] || return 1
+        target="$high_id"
+        [ "$want" = "low" ] && target="$low_id"
+        [ "$cur_id" = "$target" ] && return 0
+        sleep 1
+    done
+    return 1
+}
+
 case "$1" in
     auto|low|high)
         echo "$1" > "$MODE_FILE"
-        apply "$(desired)"
+        apply_verified "$(desired)"
         ;;
     sync)
-        apply "$(desired)"
+        apply_verified "$(desired)"
         ;;
     status)
         read -r name low_id low_hz high_id high_hz cur_id cur_hz <<< "$(panel_info)"

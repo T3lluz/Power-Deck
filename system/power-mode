@@ -27,7 +27,59 @@ nvidia_runtime_pm() {
     done
 }
 
+GFX_CONF=/etc/supergfxd.conf
+GFX_STATE_DIR=/var/lib/power-deck
+GFX_PENDING="$GFX_STATE_DIR/gfx-pending"
+
 case "$1" in
+    # Queue a graphics mode for the next boot. supergfxctl -m is
+    # deliberately NOT used: even with always_reboot it first attempts a
+    # live driver unload, which fails while a session holds nvidia_drm
+    # and then wedges the daemon on a PCI unbind in uninterruptible
+    # kernel state — the process survives SIGKILL and the next
+    # reboot/shutdown hangs on a black screen.
+    #
+    # Editing /etc/supergfxd.conf while the daemon runs is not safe
+    # either: if supergfxd restarts mid-session (crash, upgrade — it
+    # has Restart=always) it applies the config mode LIVE at startup
+    # and wedges the same way. So the target mode is only STAGED here;
+    # power-deck-gfx-apply.service commits it into the config at
+    # shutdown (after supergfxd stopped) or early boot (before it
+    # starts), when no daemon can react to the change.
+    gfx-mode)
+        case "${2:-}" in
+            Integrated|Hybrid|AsusMuxDgpu|AsusEgpu|Vfio) ;;
+            *) echo "Usage: $0 gfx-mode Integrated|Hybrid|AsusMuxDgpu|AsusEgpu|Vfio" >&2; exit 1 ;;
+        esac
+        [ -f "$GFX_CONF" ] || { echo "$GFX_CONF not found" >&2; exit 1; }
+        cur=$(sed -n 's/.*"mode": "\([A-Za-z]*\)".*/\1/p' "$GFX_CONF" | head -n1)
+        if [ "$2" = "$cur" ]; then
+            # re-selecting the configured mode cancels a queued switch
+            rm -f "$GFX_PENDING"
+        else
+            mkdir -p "$GFX_STATE_DIR" && chmod 755 "$GFX_STATE_DIR"
+            printf '%s\n' "$2" > "$GFX_PENDING" || exit 1
+            chmod 644 "$GFX_PENDING"
+            sync "$GFX_PENDING"
+        fi
+        exit 0
+        ;;
+    # Commit a staged graphics mode into supergfxd's config. Only safe
+    # while supergfxd is NOT running; invoked by
+    # power-deck-gfx-apply.service at shutdown and early boot.
+    gfx-commit)
+        [ -s "$GFX_PENDING" ] || exit 0
+        mode=$(head -n1 "$GFX_PENDING")
+        case "$mode" in
+            Integrated|Hybrid|AsusMuxDgpu|AsusEgpu|Vfio) ;;
+            *) rm -f "$GFX_PENDING"; exit 0 ;;
+        esac
+        [ -f "$GFX_CONF" ] || { rm -f "$GFX_PENDING"; exit 0; }
+        sed -i "s/\"mode\": \"[A-Za-z]*\"/\"mode\": \"$mode\"/" "$GFX_CONF" \
+            && sync "$GFX_CONF" \
+            && rm -f "$GFX_PENDING"
+        exit $?
+        ;;
     extreme)
         echo powersave > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
         [ -n "$WIFI" ] && iw dev "$WIFI" set power_save on
@@ -39,7 +91,7 @@ case "$1" in
         [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off
         ;;
     *)
-        echo "Usage: $0 extreme|normal" >&2
+        echo "Usage: $0 extreme|normal|gfx-mode <Mode>|gfx-commit" >&2
         exit 1
         ;;
 esac
