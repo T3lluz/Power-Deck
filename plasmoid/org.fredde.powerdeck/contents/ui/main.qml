@@ -127,6 +127,9 @@ PlasmoidItem {
     property string gfxTarget: ""
     // last mode actually submitted, for the success notification
     property string gfxTargetApplied: ""
+    // true while a mode switch is in flight: the pending state is shown
+    // optimistically and polls must not overwrite it with stale data
+    property bool gfxSwitching: false
 
     property string refreshMode: "high"
     property int refreshLowHz: 60
@@ -257,10 +260,13 @@ PlasmoidItem {
             // Mode switches need explicit success/failure feedback, unlike
             // the fire-and-forget status polls below.
             if (sourceName.indexOf("gfx-ctl set") !== -1) {
+                root.gfxSwitching = false
                 if (data["exit code"] === 0) {
                     root.notify(i18n("GPU mode: %1", root.gfxLabel(root.gfxTargetApplied)),
                         i18n("Reboot to apply the new graphics mode"))
                 } else {
+                    // roll back the optimistic pending state
+                    root.gfxPendingMode = "none"
                     root.notify(i18n("GPU mode switch failed"),
                         i18n("Check that supergfxd is running"))
                 }
@@ -369,8 +375,13 @@ PlasmoidItem {
                         var gparts = output.split(" ")
                         if (gparts.length >= 4) {
                             root.gfxMode = gparts[0]
-                            root.gfxPendingMode = gparts[1]
-                            root.gfxPendingAction = gparts[2]
+                            // a poll launched before the switch may still
+                            // report "no pending mode" — don't let it erase
+                            // the optimistic state shown to the user
+                            if (!root.gfxSwitching) {
+                                root.gfxPendingMode = gparts[1]
+                                root.gfxPendingAction = gparts[2]
+                            }
                             root.gfxSupported = (gparts[3] === "none") ? [] : gparts[3].split(",")
                         }
                     }
@@ -476,6 +487,10 @@ PlasmoidItem {
     function applyGfxMode(mode, rebootAfter) {
         gfxTarget = ""
         gfxTargetApplied = mode
+        // supergfxctl -m can take several seconds; reflect the pending
+        // state immediately instead of waiting for the next status poll
+        gfxSwitching = true
+        gfxPendingMode = mode
         var cmd = gfxScriptPath + " set " + mode
         if (rebootAfter) cmd += " && systemctl reboot"
         execDataSource.connectSource(cmd)
@@ -766,7 +781,9 @@ PlasmoidItem {
 
                     PC3.Label {
                         visible: root.gfxPendingMode !== "none" || root.gfxPendingAction !== "none"
-                        text: i18n("Reboot to apply")
+                        text: root.gfxPendingMode !== "none"
+                            ? i18n("%1 after reboot", root.gfxLabel(root.gfxPendingMode))
+                            : i18n("Reboot to apply")
                         color: Theme.amber
                         font.weight: Font.DemiBold
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
@@ -782,16 +799,45 @@ PlasmoidItem {
 
                         AnimeChip {
                             required property string modelData
+                            // mode that becomes active after the reboot
+                            readonly property bool isPending: root.gfxPendingMode !== "none"
+                                && root.gfxPendingMode === modelData
                             label: root.gfxLabel(modelData)
-                            isActive: root.gfxPendingMode !== "none"
-                                ? root.gfxPendingMode === modelData
-                                : root.gfxMode === modelData
+                            // red = active now, pulsing amber = after reboot
+                            accentColor: isPending ? Theme.amber : Theme.red
+                            pulsing: isPending
+                            isActive: isPending || root.gfxMode === modelData
                             onClicked: {
                                 if (modelData !== root.gfxMode && modelData !== root.gfxPendingMode) {
                                     root.gfxTarget = modelData
                                 }
                             }
                         }
+                    }
+                }
+
+                // one-click reboot with an arm step so a stray click is harmless
+                AnimeChip {
+                    id: rebootChip
+                    property bool armed: false
+                    visible: root.gfxPendingMode !== "none" || root.gfxPendingAction !== "none"
+                    label: armed ? i18n("Click again to reboot") : i18n("Reboot now to apply")
+                    accentColor: armed ? Theme.red : Theme.amber
+                    isActive: armed
+                    pulsing: armed
+                    onClicked: {
+                        if (armed) {
+                            execDataSource.connectSource("systemctl reboot")
+                        } else {
+                            armed = true
+                            rebootArmTimer.restart()
+                        }
+                    }
+
+                    Timer {
+                        id: rebootArmTimer
+                        interval: 4000
+                        onTriggered: rebootChip.armed = false
                     }
                 }
             }
@@ -1110,9 +1156,9 @@ PlasmoidItem {
 
             Rectangle {
                 anchors.centerIn: parent
-                width: parent.width - Kirigami.Units.largeSpacing * 4
-                height: confirmColumn.implicitHeight + Kirigami.Units.largeSpacing * 3
-                radius: Kirigami.Units.smallSpacing * 1.5
+                width: parent.width - Kirigami.Units.largeSpacing * 2
+                height: confirmColumn.implicitHeight + Kirigami.Units.largeSpacing * 4
+                radius: Kirigami.Units.smallSpacing * 2
                 color: Kirigami.Theme.backgroundColor
                 border.width: 1
                 border.color: Theme.alpha(Theme.red, 0.4)
@@ -1120,8 +1166,8 @@ PlasmoidItem {
                 ColumnLayout {
                     id: confirmColumn
                     anchors.fill: parent
-                    anchors.margins: Kirigami.Units.largeSpacing * 1.5
-                    spacing: Kirigami.Units.smallSpacing * 1.5
+                    anchors.margins: Kirigami.Units.largeSpacing * 2
+                    spacing: Kirigami.Units.smallSpacing * 2
 
                     PC3.Label {
                         Layout.fillWidth: true
@@ -1134,36 +1180,42 @@ PlasmoidItem {
 
                     PC3.Label {
                         Layout.fillWidth: true
-                        text: i18n("Switch graphics to %1? A reboot is required before the new mode takes effect.",
-                            root.gfxLabel(root.gfxTarget))
+                        text: i18n("Switch graphics to %1?", root.gfxLabel(root.gfxTarget))
                         color: Kirigami.Theme.textColor
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize
+                        font.weight: Font.Bold
+                        font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.1)
                         wrapMode: Text.WordWrap
                     }
 
-                    RowLayout {
+                    PC3.Label {
+                        Layout.fillWidth: true
+                        text: i18n("The new mode takes effect after the next reboot. Nothing changes if you cancel.")
+                        color: Kirigami.Theme.disabledTextColor
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        wrapMode: Text.WordWrap
+                    }
+
+                    AnimeChip {
                         Layout.fillWidth: true
                         Layout.topMargin: Kirigami.Units.smallSpacing
-                        spacing: Kirigami.Units.smallSpacing
+                        label: i18n("Switch + Reboot now")
+                        accentColor: Theme.red
+                        isActive: true
+                        onClicked: root.applyGfxMode(root.gfxTarget, true)
+                    }
 
-                        AnimeChip {
-                            label: i18n("Cancel")
-                            onClicked: root.gfxTarget = ""
-                        }
+                    AnimeChip {
+                        Layout.fillWidth: true
+                        label: i18n("Switch, reboot later")
+                        accentColor: Theme.amber
+                        isActive: true
+                        onClicked: root.applyGfxMode(root.gfxTarget, false)
+                    }
 
-                        AnimeChip {
-                            label: i18n("Switch")
-                            accentColor: Theme.amber
-                            isActive: true
-                            onClicked: root.applyGfxMode(root.gfxTarget, false)
-                        }
-
-                        AnimeChip {
-                            label: i18n("Switch + Reboot")
-                            accentColor: Theme.red
-                            isActive: true
-                            onClicked: root.applyGfxMode(root.gfxTarget, true)
-                        }
+                    AnimeChip {
+                        Layout.fillWidth: true
+                        label: i18n("Cancel")
+                        onClicked: root.gfxTarget = ""
                     }
                 }
             }

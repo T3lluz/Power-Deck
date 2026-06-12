@@ -11,10 +11,14 @@ Item {
     property bool isActive: false
     property bool chipEnabled: true
     property color accentColor: Theme.red
+    // soft breathing glow, used for "pending until reboot" states
+    property bool pulsing: false
 
     signal clicked()
 
     Layout.fillWidth: true
+    // never squeeze the label against the pill border
+    Layout.minimumWidth: labelText.implicitWidth + Kirigami.Units.largeSpacing * 2
     Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.6)
     opacity: chipEnabled ? 1.0 : Theme.offOpacity
     Behavior on opacity {
@@ -47,7 +51,27 @@ Item {
         }
     }
 
+    Rectangle {
+        id: glowRing
+        anchors.fill: parent
+        radius: height / 2
+        color: "transparent"
+        border.width: 2
+        border.color: root.accentColor
+        opacity: 0
+        visible: root.pulsing
+
+        SequentialAnimation on opacity {
+            running: root.pulsing
+            loops: Animation.Infinite
+            alwaysRunToEnd: true
+            NumberAnimation { from: 0.15; to: 0.85; duration: 900; easing.type: Easing.InOutSine }
+            NumberAnimation { from: 0.85; to: 0.15; duration: 900; easing.type: Easing.InOutSine }
+        }
+    }
+
     PC3.Label {
+        id: labelText
         anchors.centerIn: parent
         text: root.label
         color: root.isActive ? root.accentColor : Kirigami.Theme.textColor

@@ -139,7 +139,7 @@ fnlock-ctl on|off|status
 refresh-ctl auto|low|high|sync|status
 temp-ctl                  # prints "<cpuT> <gpuT> <cpuW> <gpuW>" ("-" if unavailable)
 charge-ctl status|oneshot|<20-100>
-battery-ctl               # prints "<state> <percent> <minutes> <ac>"
+battery-ctl               # prints "<state> <percent> <minutes> <ac> <watts>"
 gfx-ctl status|set <Mode> # supergfxctl wrapper (Integrated, Hybrid, ...)
 ```
 
