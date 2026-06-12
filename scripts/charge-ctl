@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# charge-ctl — get/set the battery charge limit for the Power Deck widget.
+#
+# Usage:
+#   charge-ctl status     print the current limit (defaults to 100)
+#   charge-ctl <20-100>   set the limit (asusctl, with a sysfs fallback)
+set -u
+
+THRESHOLD_GLOB=/sys/class/power_supply/BAT*/charge_control_end_threshold
+
+read_threshold() {
+    local f
+    for f in $THRESHOLD_GLOB; do
+        [ -r "$f" ] || continue
+        cat "$f" 2>/dev/null
+        return 0
+    done
+    return 1
+}
+
+cmd="${1:-status}"
+
+if [ "$cmd" = "status" ]; then
+    val="$(read_threshold)" || val=100
+    case "$val" in
+        ''|*[!0-9]*) val=100 ;;
+    esac
+    echo "$val"
+    exit 0
+fi
+
+case "$cmd" in
+    ''|*[!0-9]*)
+        echo "usage: charge-ctl status|<20-100>" >&2
+        exit 1
+        ;;
+esac
+if [ "$cmd" -lt 20 ] || [ "$cmd" -gt 100 ]; then
+    echo "charge limit must be between 20 and 100" >&2
+    exit 1
+fi
+
+if command -v asusctl >/dev/null 2>&1; then
+    # "battery limit" on current asusctl, "-c" on older releases
+    if asusctl battery limit "$cmd" >/dev/null 2>&1 \
+        || asusctl -c "$cmd" >/dev/null 2>&1; then
+        exit 0
+    fi
+fi
+
+# Fallback: direct sysfs write (works when a udev rule grants user access)
+for f in $THRESHOLD_GLOB; do
+    [ -w "$f" ] || continue
+    echo "$cmd" > "$f" 2>/dev/null && exit 0
+done
+
+echo "could not set charge limit (asusd not running?)" >&2
+exit 1

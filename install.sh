@@ -89,7 +89,7 @@ if [ "$ACTION" = "uninstall" ]; then
     fi
 
     step "Helper scripts"
-    rm -f "${BIN_DIR}"/{ghelper-profile,anime-ctl,anime-power-watch,kbd-idle-ctl,kbd-idle-helper,fnlock-ctl,fnlock-daemon.py,ghelper-restore,refresh-ctl}
+    rm -f "${BIN_DIR}"/{ghelper-profile,anime-ctl,anime-power-watch,kbd-idle-ctl,kbd-idle-helper,fnlock-ctl,fnlock-daemon.py,ghelper-restore,refresh-ctl,temp-ctl,charge-ctl}
     ok
 
     step "Systemd user services"
@@ -215,7 +215,8 @@ mkdir -p "$BIN_DIR" "$SYSTEMD_USER_DIR" "${HOME}/.local/state" \
 
 step "Helper scripts -> ~/.local/bin"
 for script in ghelper-profile anime-ctl anime-power-watch kbd-idle-ctl \
-    kbd-idle-helper fnlock-ctl fnlock-daemon.py ghelper-restore refresh-ctl; do
+    kbd-idle-helper fnlock-ctl fnlock-daemon.py ghelper-restore refresh-ctl \
+    temp-ctl charge-ctl; do
     install -m 755 "${REPO_ROOT}/scripts/${script}" "${BIN_DIR}/${script}"
 done
 ok

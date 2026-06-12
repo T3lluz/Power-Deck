@@ -32,6 +32,52 @@ PlasmoidItem {
         }
     }
 
+    // compact pill showing one temperature reading, tinted by heat level
+    component TempPill: Rectangle {
+        id: pill
+
+        property string sensorLabel
+        property int temp: -1
+        readonly property color heat: temp < 0 ? Kirigami.Theme.disabledTextColor
+            : temp >= 85 ? Theme.red
+            : temp >= 70 ? Theme.amber
+            : Theme.teal
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.4)
+        radius: height / 2
+        color: Theme.alpha(heat, 0.10)
+        border.width: 1
+        border.color: Theme.alpha(heat, 0.3)
+
+        Behavior on border.color {
+            ColorAnimation { duration: Theme.durSlow }
+        }
+        Behavior on color {
+            ColorAnimation { duration: Theme.durSlow }
+        }
+
+        RowLayout {
+            anchors.centerIn: parent
+            spacing: Kirigami.Units.smallSpacing
+
+            PC3.Label {
+                text: pill.sensorLabel
+                color: Kirigami.Theme.disabledTextColor
+                font.weight: Font.DemiBold
+                font.letterSpacing: 1.2
+                font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
+            }
+
+            PC3.Label {
+                text: pill.temp >= 0 ? i18n("%1°C", pill.temp) : i18n("—")
+                color: pill.heat
+                font.weight: Font.Bold
+                font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+            }
+        }
+    }
+
     property string currentProfile: "unknown"
     property string previousProfile: "unknown"
     property bool isSwitching: false
@@ -49,6 +95,12 @@ PlasmoidItem {
 
     property bool fnLockOn: false
 
+    property int cpuTemp: -1
+    property int gpuTemp: -1
+
+    property int chargeLimit: 100
+    property bool chargeSliderPressed: false
+
     property string refreshMode: "high"
     property int refreshLowHz: 60
     property int refreshHighHz: 60
@@ -60,6 +112,8 @@ PlasmoidItem {
     readonly property string kbdScriptPath: binDir + "/kbd-idle-ctl"
     readonly property string fnScriptPath: binDir + "/fnlock-ctl"
     readonly property string refreshScriptPath: binDir + "/refresh-ctl"
+    readonly property string tempScriptPath: binDir + "/temp-ctl"
+    readonly property string chargeScriptPath: binDir + "/charge-ctl"
     readonly property var profiles: ["extreme", "power", "balanced", "performance"]
 
     readonly property var profileData: ({
@@ -109,6 +163,12 @@ PlasmoidItem {
 
     Plasmoid.icon: "preferences-system-power-management"
     Plasmoid.status: PlasmaCore.Types.PassiveStatus
+
+    toolTipMainText: i18n("Power Deck — %1", dataFor(currentProfile).name)
+    toolTipSubText: i18n("CPU %1 · GPU %2 · %3 Hz",
+        cpuTemp >= 0 ? i18n("%1°C", cpuTemp) : i18n("—"),
+        gpuTemp >= 0 ? i18n("%1°C", gpuTemp) : i18n("—"),
+        refreshCurrentHz)
 
     switchWidth: Kirigami.Units.gridUnit * 19
     switchHeight: fullRepresentationItem && fullRepresentationItem.implicitHeight > 0
@@ -172,6 +232,21 @@ PlasmoidItem {
                             if (!isNaN(lo) && lo > 0) root.refreshLowHz = lo
                             if (!isNaN(hi) && hi > 0) root.refreshHighHz = hi
                             if (!isNaN(cur) && cur > 0) root.refreshCurrentHz = cur
+                        }
+                    }
+                } else if (sourceName.indexOf("temp-ctl") !== -1) {
+                    var tparts = output.split(" ")
+                    if (tparts.length >= 2) {
+                        var ct = parseInt(tparts[0])
+                        var gt = parseInt(tparts[1])
+                        root.cpuTemp = isNaN(ct) ? -1 : ct
+                        root.gpuTemp = isNaN(gt) ? -1 : gt
+                    }
+                } else if (sourceName.indexOf("charge-ctl") !== -1) {
+                    if (sourceName.indexOf("status") !== -1) {
+                        var cl = parseInt(output)
+                        if (!isNaN(cl) && cl >= 20 && cl <= 100 && !root.chargeSliderPressed) {
+                            root.chargeLimit = cl
                         }
                     }
                 } else if (sourceName.indexOf("fnlock-ctl") !== -1) {
@@ -252,6 +327,12 @@ PlasmoidItem {
         execDataSource.connectSource(fnScriptPath + (on ? " on" : " off"))
     }
 
+    function setChargeLimit(limit) {
+        if (limit === chargeLimit) return
+        chargeLimit = limit
+        execDataSource.connectSource(chargeScriptPath + " " + limit)
+    }
+
     function setRefreshMode(mode) {
         refreshMode = mode
         execDataSource.connectSource(refreshScriptPath + " " + mode)
@@ -270,6 +351,8 @@ PlasmoidItem {
         execDataSource.connectSource(kbdScriptPath + " status")
         execDataSource.connectSource(fnScriptPath + " status")
         execDataSource.connectSource(refreshScriptPath + " status")
+        execDataSource.connectSource(tempScriptPath)
+        execDataSource.connectSource(chargeScriptPath + " status")
     }
 
     Timer {
@@ -391,6 +474,22 @@ PlasmoidItem {
                 }
             }
 
+            // ================= thermals =================
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                TempPill {
+                    sensorLabel: i18n("CPU")
+                    temp: root.cpuTemp
+                }
+
+                TempPill {
+                    sensorLabel: i18n("GPU")
+                    temp: root.gpuTemp
+                }
+            }
+
             // ================= profiles =================
             GridLayout {
                 Layout.fillWidth: true
@@ -443,15 +542,21 @@ PlasmoidItem {
 
                         AnimeChip {
                             label: i18n("Banner")
-                            isActive: root.animeDisplayOn && root.animeShape === "banner"
+                            isActive: root.animeShape === "banner"
                             chipEnabled: root.animeOn
+                            // dimmed but still selected while the display is
+                            // suspended on battery power
+                            opacity: !root.animeOn ? Theme.offOpacity
+                                : root.animeDisplayOn ? 1.0 : 0.55
                             onClicked: setAnimeShape("banner")
                         }
 
                         AnimeChip {
                             label: i18n("Logo")
-                            isActive: root.animeDisplayOn && root.animeShape === "logo"
+                            isActive: root.animeShape === "logo"
                             chipEnabled: root.animeOn
+                            opacity: !root.animeOn ? Theme.offOpacity
+                                : root.animeDisplayOn ? 1.0 : 0.55
                             onClicked: setAnimeShape("logo")
                         }
                     }
@@ -636,6 +741,52 @@ PlasmoidItem {
                         label: i18n("%1 Hz", root.refreshHighHz)
                         isActive: root.refreshMode === "high"
                         onClicked: setRefreshMode("high")
+                    }
+                }
+            }
+
+            // ================= battery =================
+            SectionCard {
+                SectionHeader {
+                    title: i18n("CHARGE LIMIT")
+                    iconSource: Qt.resolvedUrl("../images/battery.svg")
+                    active: true
+
+                    PC3.Label {
+                        text: root.chargeLimit >= 100
+                            ? i18n("Full")
+                            : i18n("%1%", root.chargeLimit)
+                        color: root.chargeLimit >= 100 ? Theme.redBright : Theme.green
+                        font.weight: Font.DemiBold
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+
+                    PC3.Label {
+                        text: i18n("80%")
+                        color: Kirigami.Theme.disabledTextColor
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                    }
+
+                    PC3.Slider {
+                        Layout.fillWidth: true
+                        from: 80
+                        to: 100
+                        stepSize: 5
+                        snapMode: PC3.Slider.SnapAlways
+                        value: root.chargeLimit < 80 ? 80 : root.chargeLimit
+                        onPressedChanged: root.chargeSliderPressed = pressed
+                        onMoved: setChargeLimit(Math.round(value))
+                    }
+
+                    PC3.Label {
+                        text: i18n("100%")
+                        color: Kirigami.Theme.disabledTextColor
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                     }
                 }
             }

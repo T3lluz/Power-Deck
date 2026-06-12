@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# temp-ctl — report CPU and GPU temperatures for the Power Deck widget.
+#
+# Output: "<cpu> <gpu>" as whole degrees Celsius, with "-" for any
+# reading that is unavailable (e.g. "62 59", "62 -").
+set -u
+
+HWMON_DIR=/sys/class/hwmon
+
+# Print the temperature (whole °C) of the first temp*_input under a hwmon
+# directory, preferring inputs whose label matches $2 (regex).
+hwmon_temp() {
+    local dir="$1" want="${2:-}" t label fallback=""
+    for t in "$dir"/temp*_input; do
+        [ -r "$t" ] || continue
+        if [ -n "$want" ]; then
+            label="$(cat "${t%_input}_label" 2>/dev/null)"
+            if printf '%s' "$label" | grep -qiE "$want"; then
+                cat "$t" 2>/dev/null
+                return 0
+            fi
+            [ -n "$fallback" ] || fallback="$t"
+        else
+            cat "$t" 2>/dev/null
+            return 0
+        fi
+    done
+    # No labelled match: fall back to the first input so a sensor with
+    # unlabelled channels still produces a reading.
+    if [ -n "$fallback" ]; then
+        cat "$fallback" 2>/dev/null
+        return 0
+    fi
+    return 1
+}
+
+to_celsius() {
+    # hwmon and thermal_zone values are in millidegrees
+    local raw="$1"
+    case "$raw" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    echo $(( (raw + 500) / 1000 ))
+}
+
+cpu=""
+gpu=""
+
+for h in "$HWMON_DIR"/hwmon*; do
+    [ -d "$h" ] || continue
+    name="$(cat "$h/name" 2>/dev/null)"
+    case "$name" in
+        k10temp|zenpower)
+            [ -n "$cpu" ] || cpu="$(hwmon_temp "$h" '^(tctl|tdie)$')"
+            ;;
+        coretemp)
+            [ -n "$cpu" ] || cpu="$(hwmon_temp "$h" '^package')"
+            ;;
+        amdgpu)
+            [ -n "$gpu" ] || gpu="$(hwmon_temp "$h" '^edge$')"
+            ;;
+        nouveau|gpu_thermal)
+            [ -n "$gpu" ] || gpu="$(hwmon_temp "$h")"
+            ;;
+    esac
+done
+
+# CPU fallback: ACPI thermal zones
+if [ -z "$cpu" ]; then
+    for z in /sys/class/thermal/thermal_zone*; do
+        [ -d "$z" ] || continue
+        type="$(cat "$z/type" 2>/dev/null)"
+        case "$type" in
+            x86_pkg_temp|acpitz|cpu*-thermal)
+                cpu="$(cat "$z/temp" 2>/dev/null)"
+                [ -n "$cpu" ] && break
+                ;;
+        esac
+    done
+fi
+
+# NVIDIA fallback: only query nvidia-smi while the GPU is awake (D0),
+# otherwise the poll itself would keep waking a runtime-suspended dGPU.
+if [ -z "$gpu" ] && command -v nvidia-smi >/dev/null 2>&1; then
+    for dev in /sys/bus/pci/devices/*; do
+        [ "$(cat "$dev/vendor" 2>/dev/null)" = "0x10de" ] || continue
+        case "$(cat "$dev/class" 2>/dev/null)" in 0x03*) ;; *) continue ;; esac
+        if [ "$(cat "$dev/power_state" 2>/dev/null)" = "D0" ]; then
+            smi="$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -d '[:space:]')"
+            case "$smi" in
+                ''|*[!0-9]*) ;;
+                *) gpu=$(( smi * 1000 )) ;;
+            esac
+        fi
+        break
+    done
+fi
+
+cpu_c="$(to_celsius "${cpu:-}")" || cpu_c="-"
+gpu_c="$(to_celsius "${gpu:-}")" || gpu_c="-"
+
+echo "$cpu_c $gpu_c"
