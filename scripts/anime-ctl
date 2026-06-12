@@ -1,6 +1,6 @@
 #!/bin/bash
 # anime-ctl - AniMe Matrix control for the Plasma profile widget
-# Usage: anime-ctl [on|off|banner|logo|battery-off <on|off>|status]
+# Usage: anime-ctl [on|off|banner|logo|battery-off <on|off>|sync|status]
 
 STATE_DIR="$HOME/.local/state"
 POWER_FILE="$STATE_DIR/anime-power"
@@ -12,6 +12,21 @@ BOOT_ANIM="GlitchConstruction"
 SLEEP_ANIM="BannerSwipe"
 SHUTDOWN_ANIM="GlitchOut"
 
+on_ac() {
+    local ps online
+    for ps in /sys/class/power_supply/ADP*/online \
+              /sys/class/power_supply/AC*/online; do
+        [ -f "$ps" ] || continue
+        online=$(cat "$ps" 2>/dev/null) || continue
+        [ "$online" = "1" ] && return 0
+    done
+    return 1
+}
+
+anime_bool() {
+    grep -q "${1}: true" "$ASUSD_ANIME_CONF" 2>/dev/null
+}
+
 apply_shape() {
     local awake="BinaryBannerScroll"
     [ "$1" = "logo" ] && awake="RogLogoGlitch"
@@ -21,38 +36,74 @@ apply_shape() {
     echo "$1" > "$SHAPE_FILE"
 }
 
-case "$1" in
-    on)
-        asusctl anime --enable-display true
-        echo on > "$POWER_FILE"
+# Bring the physical display in line with: user preference AND power source.
+# Idempotent: only calls asusctl when the state actually needs to change,
+# so it is safe to run repeatedly (timer/watcher) without restarting anims.
+sync_display() {
+    local pref desired current shape
+    pref=$(cat "$POWER_FILE" 2>/dev/null || echo on)
+
+    desired=true
+    if [ "$pref" = "off" ]; then
+        desired=false
+    elif anime_bool off_when_unplugged && ! on_ac; then
+        desired=false
+    fi
+
+    if anime_bool display_enabled; then current=true; else current=false; fi
+    [ "$desired" = "$current" ] && return 0
+
+    asusctl anime --enable-display "$desired"
+    if [ "$desired" = "true" ]; then
         shape=$(cat "$SHAPE_FILE" 2>/dev/null)
         [ "$shape" = "logo" ] || shape="banner"
         apply_shape "$shape"
+    fi
+}
+
+case "$1" in
+    on)
+        echo on > "$POWER_FILE"
+        sync_display
         ;;
     off)
-        asusctl anime --enable-display false
         echo off > "$POWER_FILE"
+        asusctl anime --enable-display false
         ;;
     banner|logo)
-        apply_shape "$1"
+        echo "$1" > "$SHAPE_FILE"
+        # Apply immediately if the display is currently lit; otherwise the
+        # shape is picked up the next time sync turns the display on.
+        if anime_bool display_enabled; then
+            apply_shape "$1"
+        fi
         ;;
     battery-off)
         [ "$2" = "on" ] && val=true || val=false
         asusctl anime --off-when-unplugged "$val"
+        sync_display
+        ;;
+    sync)
+        sync_display
         ;;
     status)
         shape=$(cat "$SHAPE_FILE" 2>/dev/null)
         [ "$shape" = "logo" ] || shape="banner"
-        power=$(cat "$POWER_FILE" 2>/dev/null || echo on)
-        if grep -q 'off_when_unplugged: true' "$ASUSD_ANIME_CONF" 2>/dev/null; then
+        pref=$(cat "$POWER_FILE" 2>/dev/null || echo on)
+        if anime_bool off_when_unplugged; then
             battery="yes"
         else
             battery="no"
         fi
-        echo "$power $shape $battery"
+        if anime_bool display_enabled; then
+            display="on"
+        else
+            display="off"
+        fi
+        echo "$pref $shape $battery $display"
         ;;
     *)
-        echo "Usage: $0 [on|off|banner|logo|battery-off <on|off>|status]"
+        echo "Usage: $0 [on|off|banner|logo|battery-off <on|off>|sync|status]"
         exit 1
         ;;
 esac

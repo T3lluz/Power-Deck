@@ -40,26 +40,24 @@ Tested on a **ROG Zephyrus G14 (GA402NV)** running KDE Plasma 6. You will likely
 
 ## Install
 
+One-liner (downloads the repo, installs everything, enables services, restarts Plasma):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/T3lluz/Power-Deck/main/install.sh | bash
+```
+
+The installer checks dependencies, installs the widget, scripts, and systemd user
+services, and offers to install the optional root helper for Extreme mode (sudo).
+
+Or from a clone:
+
 ```bash
 git clone https://github.com/T3lluz/Power-Deck.git
 cd Power-Deck
 ./install.sh
 ```
 
-Then install the optional root helper (needed for Extreme mode):
-
-```bash
-sudo install -m 755 system/power-mode /usr/local/bin/power-mode
-sudo install -m 440 system/power-mode.sudoers /etc/sudoers.d/power-mode
-```
-
-Enable login restore (re-applies saved profile and FN-lock):
-
-```bash
-systemctl --user enable --now ghelper-restore.service
-```
-
-Add **Power Deck** to your Plasma panel: right-click panel → **Add Widgets** → search for "Power Deck".
+Afterwards, add **Power Deck** to your Plasma panel: right-click panel → **Add Widgets** → search for "Power Deck".
 
 ## Local development
 

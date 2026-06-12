@@ -1,0 +1,35 @@
+#!/bin/bash
+# anime-power-watch - keep the AniMe Matrix in sync with AC plug/unplug.
+# Run by anime-power-sync.service. Listens for power_supply udev events and
+# re-syncs the display; falls back to polling if udevadm is unavailable.
+
+ANIME_CTL="$HOME/.local/bin/anime-ctl"
+[ -x "$ANIME_CTL" ] || ANIME_CTL="$(dirname "$0")/anime-ctl"
+
+sync() {
+    "$ANIME_CTL" sync >/dev/null 2>&1
+}
+
+# Initial sync so state is correct at login.
+sync
+
+if command -v udevadm >/dev/null 2>&1; then
+    # stdbuf keeps the pipe line-buffered so events arrive immediately.
+    stdbuf -oL udevadm monitor --udev --subsystem-match=power_supply 2>/dev/null |
+    while read -r _; do
+        # Coalesce event bursts (plug/unplug emits several events at once).
+        while read -r -t 1 _; do :; done
+        sync
+    done
+fi
+
+# Fallback: poll the AC adapter state.
+prev=""
+while :; do
+    cur=$(cat /sys/class/power_supply/ADP*/online 2>/dev/null | head -1)
+    if [ "$cur" != "$prev" ]; then
+        prev="$cur"
+        sync
+    fi
+    sleep 2
+done

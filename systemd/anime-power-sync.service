@@ -1,0 +1,11 @@
+[Unit]
+Description=Sync AniMe Matrix display with AC power state
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/anime-power-watch
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

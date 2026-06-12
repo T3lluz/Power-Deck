@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 
+import QtCore
 import QtQuick
 import QtQuick.Layouts
 import org.kde.plasma.core as PlasmaCore
@@ -17,6 +18,7 @@ PlasmoidItem {
     property bool isSwitching: false
 
     property bool animeOn: true
+    property bool animeDisplayOn: true
     property string animeShape: "banner"
     property bool animeBatteryOff: true
 
@@ -28,7 +30,7 @@ PlasmoidItem {
 
     property bool fnLockOn: true
 
-    readonly property string binDir: Qt.environment.HOME + "/.local/bin"
+    readonly property string binDir: StandardPaths.writableLocation(StandardPaths.HomeLocation).toString().substring(7) + "/.local/bin"
     readonly property string scriptPath: binDir + "/ghelper-profile"
     readonly property string animeScriptPath: binDir + "/anime-ctl"
     readonly property string kbdScriptPath: binDir + "/kbd-idle-ctl"
@@ -109,6 +111,11 @@ PlasmoidItem {
                             }
                             if (parts.length >= 3) {
                                 root.animeBatteryOff = (parts[2] === "yes")
+                            }
+                            if (parts.length >= 4) {
+                                root.animeDisplayOn = (parts[3] === "on")
+                            } else {
+                                root.animeDisplayOn = root.animeOn
                             }
                         }
                     }
@@ -208,9 +215,16 @@ PlasmoidItem {
         execDataSource.connectSource(fnScriptPath + (on ? " on" : " off"))
     }
 
+    function refreshAnime() {
+        if (animeBatteryOff && animeOn) {
+            execDataSource.connectSource(animeScriptPath + " sync")
+        }
+        execDataSource.connectSource(animeScriptPath + " status")
+    }
+
     function refreshProfile() {
         execDataSource.connectSource(scriptPath + " status")
-        execDataSource.connectSource(animeScriptPath + " status")
+        refreshAnime()
         execDataSource.connectSource(kbdScriptPath + " status")
         execDataSource.connectSource(fnScriptPath + " status")
     }
@@ -365,7 +379,7 @@ PlasmoidItem {
                             iconSource: Qt.resolvedUrl("../images/anime.svg")
                             accentColor: root.animeAccent
                             badgeSize: Math.round(Kirigami.Units.gridUnit * 1.4)
-                            active: root.animeOn
+                            active: root.animeDisplayOn
                         }
 
                         PC3.Label {
@@ -390,7 +404,7 @@ PlasmoidItem {
 
                         AnimeChip {
                             label: i18n("Banner")
-                            isActive: root.animeOn && root.animeShape === "banner"
+                            isActive: root.animeDisplayOn && root.animeShape === "banner"
                             chipEnabled: root.animeOn
                             accentColor: root.animeAccent
                             onClicked: setAnimeShape("banner")
@@ -398,7 +412,7 @@ PlasmoidItem {
 
                         AnimeChip {
                             label: i18n("Logo")
-                            isActive: root.animeOn && root.animeShape === "logo"
+                            isActive: root.animeDisplayOn && root.animeShape === "logo"
                             chipEnabled: root.animeOn
                             accentColor: root.animeAccent
                             onClicked: setAnimeShape("logo")
