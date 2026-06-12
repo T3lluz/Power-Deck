@@ -8,8 +8,12 @@ Power Deck brings GHelper-style laptop controls to KDE Plasma. Scroll the panel 
 
 - **Power modes** — Extreme Saver, Power Saver, Balanced, and Performance
 - **Scroll to switch** — mouse wheel on the panel icon cycles modes
-- **CPU & GPU temperatures** — live readouts in the popup and in the panel-icon tooltip, color-coded by heat
-- **Battery charge limit** — slider from 80% to 100% (in 5% steps) to extend battery lifespan
+- **CPU & GPU temperatures & power draw** — live readouts in the popup and in the panel-icon tooltip, color-coded by heat
+- **Battery status** — charge %, time remaining, and AC state in the popup header, tooltip, and (optionally) the panel
+- **Battery charge limit** — slider from 80% to 100% (in 5% steps) to extend battery lifespan, plus a one-shot full charge
+- **GPU mode switching** — Integrated / Hybrid / dGPU via supergfxctl, with a reboot confirmation dialog
+- **Notifications** — optional desktop notifications on profile switches, plug/unplug, and GPU mode changes
+- **Configurable panel display** — icon only, icon + profile, icon + battery %, or all three
 - **AniMe Matrix** — toggle display, pick Banner or Logo, auto-off on battery
 - **Keyboard light timer** — idle timeout, brightness slider, keep-on-AC option
 - **FN-lock** — software remapping for media keys vs function keys
@@ -26,13 +30,17 @@ CPU boost is managed by `power-profiles-daemon`: the `power-saver` profile (used
 | Balanced | balanced | Normal extras |
 | Performance | performance | Normal extras |
 
-### Temperatures
+### Temperatures and power draw
 
-The popup shows CPU and GPU temperature pills under the header, refreshed every few seconds, and the same readings appear when hovering the panel icon. Colors shift from teal (cool) through amber (70 °C+) to red (85 °C+). Readings come straight from sysfs hwmon sensors — `k10temp`/`zenpower`/`coretemp` for the CPU and `amdgpu`/`nouveau` for the GPU, with ACPI thermal-zone and `nvidia-smi` fallbacks. The NVIDIA fallback only queries the GPU while it is awake, so polling never wakes a runtime-suspended dGPU.
+The popup shows CPU and GPU temperature pills under the header (with live watts where the hardware exposes them — amdgpu PPT, NVIDIA via nvidia-smi, CPU package via RAPL when readable), refreshed every few seconds, and the same readings appear when hovering the panel icon. Colors shift from teal (cool) through amber (70 °C+) to red (85 °C+). Readings come straight from sysfs hwmon sensors — `k10temp`/`zenpower`/`coretemp` for the CPU and `amdgpu`/`nouveau` for the GPU, with ACPI thermal-zone and `nvidia-smi` fallbacks. The NVIDIA fallback only queries the GPU while it is awake, so polling never wakes a runtime-suspended dGPU.
 
 ### Battery charge limit
 
-The charge limit slider (80–100% in 5% steps) caps how far the battery charges, which helps preserve its long-term health when the laptop lives on AC. The limit is applied through `asusctl battery limit` (no root prompt) and persists in firmware; 100% restores default full charging. The widget stays in sync if the limit is changed elsewhere.
+The charge limit slider (80–100% in 5% steps) caps how far the battery charges, which helps preserve its long-term health when the laptop lives on AC. The limit is applied through `asusctl battery limit` (no root prompt) and persists in firmware; 100% restores default full charging. The widget stays in sync if the limit is changed elsewhere. When a limit is active, a **Charge to 100% once** button performs a one-shot full charge (e.g. before travel) without changing the saved limit.
+
+### GPU mode
+
+When `supergfxd` is available, a Graphics section lets you switch between Integrated, Hybrid, and dGPU (MUX) modes. Switching opens a confirmation dialog — cancel and nothing changes; confirm with **Switch** (reboot later, an amber "Reboot to apply" hint stays visible) or **Switch + Reboot**.
 
 ## Requirements
 
@@ -46,6 +54,8 @@ Tested on a **ROG Zephyrus G14 (GA402NV)** running KDE Plasma 6. You will likely
 - `swayidle`
 - `python-evdev`
 - `kscreen` (for refresh-rate switching via `kscreen-doctor`)
+- `supergfxctl` / `supergfxd` (optional, for GPU mode switching)
+- `libnotify` (optional, for desktop notifications)
 
 **KDE:**
 
@@ -127,8 +137,10 @@ anime-ctl on|off|banner|logo|battery-off on|off|status
 kbd-idle-ctl on|off|timeout 60|keep-ac on|off|brightness 0-3|status
 fnlock-ctl on|off|status
 refresh-ctl auto|low|high|sync|status
-temp-ctl                  # prints "<cpu> <gpu>" in °C ("-" if unavailable)
-charge-ctl status|<20-100>
+temp-ctl                  # prints "<cpuT> <gpuT> <cpuW> <gpuW>" ("-" if unavailable)
+charge-ctl status|oneshot|<20-100>
+battery-ctl               # prints "<state> <percent> <minutes> <ac>"
+gfx-ctl status|set <Mode> # supergfxctl wrapper (Integrated, Hybrid, ...)
 ```
 
 ## Uninstall

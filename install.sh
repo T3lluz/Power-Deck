@@ -89,7 +89,7 @@ if [ "$ACTION" = "uninstall" ]; then
     fi
 
     step "Helper scripts"
-    rm -f "${BIN_DIR}"/{ghelper-profile,anime-ctl,anime-power-watch,kbd-idle-ctl,kbd-idle-helper,fnlock-ctl,fnlock-daemon.py,ghelper-restore,refresh-ctl,temp-ctl,charge-ctl}
+    rm -f "${BIN_DIR}"/{ghelper-profile,anime-ctl,anime-power-watch,kbd-idle-ctl,kbd-idle-helper,fnlock-ctl,fnlock-daemon.py,ghelper-restore,refresh-ctl,temp-ctl,charge-ctl,battery-ctl,gfx-ctl}
     ok
 
     step "Systemd user services"
@@ -197,6 +197,8 @@ recommend brightnessctl    "keyboard backlight controls will not work"
 recommend swayidle         "keyboard idle timer will not work"
 recommend udevadm          "AniMe AC sync falls back to polling"
 recommend kscreen-doctor   "refresh-rate switching will not work"
+recommend supergfxctl      "GPU mode switching will not work"
+recommend notify-send      "desktop notifications will not work"
 
 step "python3 + evdev (FN-lock daemon)"
 if command -v python3 >/dev/null 2>&1 && run python3 -c "import evdev"; then ok; else
@@ -216,7 +218,7 @@ mkdir -p "$BIN_DIR" "$SYSTEMD_USER_DIR" "${HOME}/.local/state" \
 step "Helper scripts -> ~/.local/bin"
 for script in ghelper-profile anime-ctl anime-power-watch kbd-idle-ctl \
     kbd-idle-helper fnlock-ctl fnlock-daemon.py ghelper-restore refresh-ctl \
-    temp-ctl charge-ctl; do
+    temp-ctl charge-ctl battery-ctl gfx-ctl; do
     install -m 755 "${REPO_ROOT}/scripts/${script}" "${BIN_DIR}/${script}"
 done
 ok

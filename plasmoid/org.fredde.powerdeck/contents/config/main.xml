@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0 http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+  <group name="General">
+    <entry name="compactMode" type="Int">
+      <label>Panel display: 0=icon, 1=icon+profile, 2=icon+battery, 3=icon+profile+battery</label>
+      <default>1</default>
+    </entry>
+    <entry name="showNotifications" type="Bool">
+      <label>Show notifications on profile and power changes</label>
+      <default>true</default>
+    </entry>
+  </group>
+</kcfg>

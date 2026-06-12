@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# temp-ctl — report CPU and GPU temperatures for the Power Deck widget.
+# temp-ctl — report CPU/GPU temperatures and power draw for the Power
+# Deck widget.
 #
-# Output: "<cpu> <gpu>" as whole degrees Celsius, with "-" for any
-# reading that is unavailable (e.g. "62 59", "62 -").
+# Output: "<cpuTemp> <gpuTemp> <cpuWatts> <gpuWatts>" — temperatures in
+# whole °C, power in whole watts, "-" for any unavailable reading
+# (e.g. "62 59 - 7").
 set -u
 
 HWMON_DIR=/sys/class/hwmon
@@ -43,8 +45,19 @@ to_celsius() {
     echo $(( (raw + 500) / 1000 ))
 }
 
+# Convert µW to whole watts.
+uw_to_w() {
+    local raw="$1"
+    case "$raw" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    echo $(( (raw + 500000) / 1000000 ))
+}
+
 cpu=""
 gpu=""
+cpu_uw=""
+gpu_uw=""
 
 for h in "$HWMON_DIR"/hwmon*; do
     [ -d "$h" ] || continue
@@ -58,11 +71,30 @@ for h in "$HWMON_DIR"/hwmon*; do
             ;;
         amdgpu)
             [ -n "$gpu" ] || gpu="$(hwmon_temp "$h" '^edge$')"
+            if [ -z "$gpu_uw" ]; then
+                gpu_uw="$(cat "$h/power1_average" 2>/dev/null)"
+                [ -n "$gpu_uw" ] || gpu_uw="$(cat "$h/power1_input" 2>/dev/null)"
+            fi
             ;;
         nouveau|gpu_thermal)
             [ -n "$gpu" ] || gpu="$(hwmon_temp "$h")"
             ;;
     esac
+done
+
+# CPU package power via RAPL when readable (often root-only; then "-").
+for r in /sys/class/powercap/intel-rapl*; do
+    [ -r "$r/energy_uj" ] || continue
+    case "$(cat "$r/name" 2>/dev/null)" in package*) ;; *) continue ;; esac
+    e1="$(cat "$r/energy_uj" 2>/dev/null)"
+    sleep 0.15
+    e2="$(cat "$r/energy_uj" 2>/dev/null)"
+    case "$e1$e2" in *[!0-9]*) break ;; esac
+    if [ "$e2" -ge "$e1" ]; then
+        # µJ over 0.15 s -> µW
+        cpu_uw=$(( (e2 - e1) * 100 / 15 ))
+    fi
+    break
 done
 
 # CPU fallback: ACPI thermal zones
@@ -86,10 +118,16 @@ if [ -z "$gpu" ] && command -v nvidia-smi >/dev/null 2>&1; then
         [ "$(cat "$dev/vendor" 2>/dev/null)" = "0x10de" ] || continue
         case "$(cat "$dev/class" 2>/dev/null)" in 0x03*) ;; *) continue ;; esac
         if [ "$(cat "$dev/power_state" 2>/dev/null)" = "D0" ]; then
-            smi="$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -d '[:space:]')"
-            case "$smi" in
+            smi="$(nvidia-smi --query-gpu=temperature.gpu,power.draw --format=csv,noheader,nounits 2>/dev/null | head -n1)"
+            smi_t="$(printf '%s' "$smi" | cut -d, -f1 | tr -d '[:space:]')"
+            smi_w="$(printf '%s' "$smi" | cut -d, -f2 | tr -d '[:space:]' | cut -d. -f1)"
+            case "$smi_t" in
                 ''|*[!0-9]*) ;;
-                *) gpu=$(( smi * 1000 )) ;;
+                *) gpu=$(( smi_t * 1000 )) ;;
+            esac
+            case "$smi_w" in
+                ''|*[!0-9]*) ;;
+                *) gpu_uw=$(( smi_w * 1000000 )) ;;
             esac
         fi
         break
@@ -98,5 +136,7 @@ fi
 
 cpu_c="$(to_celsius "${cpu:-}")" || cpu_c="-"
 gpu_c="$(to_celsius "${gpu:-}")" || gpu_c="-"
+cpu_w="$(uw_to_w "${cpu_uw:-}")" || cpu_w="-"
+gpu_w="$(uw_to_w "${gpu_uw:-}")" || gpu_w="-"
 
-echo "$cpu_c $gpu_c"
+echo "$cpu_c $gpu_c $cpu_w $gpu_w"

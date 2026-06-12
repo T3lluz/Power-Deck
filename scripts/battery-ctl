@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# battery-ctl — battery status for the Power Deck widget.
+#
+# Output: "<state> <percent> <minutes> <ac> <watts>"
+#   state:   charging|discharging|full|idle|unknown
+#   percent: 0-100 or "-"
+#   minutes: time to empty (discharging) / time to full (charging), or "-"
+#   ac:      1 when on mains power, else 0
+#   watts:   battery charge/discharge rate in whole W, or "-"
+set -u
+
+bat=""
+ac=0
+for ps in /sys/class/power_supply/*; do
+    case "$(cat "$ps/type" 2>/dev/null)" in
+        Battery) [ -n "$bat" ] || { [ -r "$ps/capacity" ] && bat="$ps"; } ;;
+        Mains)   [ "$(cat "$ps/online" 2>/dev/null)" = "1" ] && ac=1 ;;
+    esac
+done
+
+if [ -z "$bat" ]; then
+    echo "unknown - - $ac -"
+    exit 0
+fi
+
+pct="$(cat "$bat/capacity" 2>/dev/null)"
+case "$pct" in ''|*[!0-9]*) pct="-" ;; esac
+
+case "$(cat "$bat/status" 2>/dev/null)" in
+    Charging)    state=charging ;;
+    Discharging) state=discharging ;;
+    Full)        state=full ;;
+    *)           state=idle ;;
+esac
+
+# Prefer energy_* (µWh + µW); fall back to charge_* (µAh + µA). The
+# ratio is what matters, so the unit family just has to be consistent.
+now="$(cat "$bat/energy_now" 2>/dev/null)"
+full="$(cat "$bat/energy_full" 2>/dev/null)"
+rate="$(cat "$bat/power_now" 2>/dev/null)"
+if [ -z "$now" ] && [ -r "$bat/charge_now" ]; then
+    now="$(cat "$bat/charge_now" 2>/dev/null)"
+    full="$(cat "$bat/charge_full" 2>/dev/null)"
+    rate="$(cat "$bat/current_now" 2>/dev/null)"
+fi
+
+mins="-"
+if [ -n "${rate:-}" ] && [ "$rate" -gt 0 ] 2>/dev/null; then
+    if [ "$state" = "discharging" ] && [ -n "${now:-}" ]; then
+        mins=$(( now * 60 / rate ))
+    elif [ "$state" = "charging" ] && [ -n "${now:-}" ] && [ -n "${full:-}" ] \
+        && [ "$full" -gt "$now" ] 2>/dev/null; then
+        mins=$(( (full - now) * 60 / rate ))
+    fi
+fi
+
+# Whole-watt drain/charge rate. power_now is µW; the charge_* fallback
+# reports µA, where W = µA * V / 1e12 — close enough using voltage_now.
+watts="-"
+if [ -n "${rate:-}" ] && [ "$rate" -gt 0 ] 2>/dev/null; then
+    if [ -r "$bat/power_now" ]; then
+        watts=$(( (rate + 500000) / 1000000 ))
+    elif [ -r "$bat/voltage_now" ]; then
+        volt="$(cat "$bat/voltage_now" 2>/dev/null)"
+        case "$volt" in
+            ''|*[!0-9]*) ;;
+            *) watts=$(( (rate * volt / 1000000 + 500000) / 1000000 )) ;;
+        esac
+    fi
+fi
+
+echo "$state $pct $mins $ac $watts"

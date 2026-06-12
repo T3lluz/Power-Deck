@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# gfx-ctl — supergfxctl wrapper for the Power Deck widget.
+#
+# Usage:
+#   gfx-ctl status       print "<current> <pending-mode> <pending-action> <supported,csv>"
+#   gfx-ctl set <Mode>   switch graphics mode (Integrated, Hybrid, ...)
+#
+# Pending fields are normalized to: none|logout|reboot|<raw>.
+set -u
+
+have_supergfx() {
+    command -v supergfxctl >/dev/null 2>&1 && systemctl is-active -q supergfxd 2>/dev/null
+}
+
+norm() {
+    case "${1:-}" in
+        ""|Unknown|None|"No action required") echo none ;;
+        *[Rr]eboot*)  echo reboot ;;
+        *[Ll]ogout*)  echo logout ;;
+        *)            echo "$1" ;;
+    esac
+}
+
+case "${1:-status}" in
+    status)
+        if ! have_supergfx; then
+            echo "none none none none"
+            exit 0
+        fi
+        cur="$(supergfxctl -g 2>/dev/null)"
+        [ -n "$cur" ] || cur=none
+        pmode="$(norm "$(supergfxctl -P 2>/dev/null)")"
+        pact="$(norm "$(supergfxctl -p 2>/dev/null)")"
+        sup="$(supergfxctl -s 2>/dev/null | tr -d '[] ')"
+        [ -n "$sup" ] || sup=none
+        echo "$cur $pmode $pact $sup"
+        ;;
+    set)
+        if [ -z "${2:-}" ]; then
+            echo "usage: gfx-ctl set <Mode>" >&2
+            exit 1
+        fi
+        if ! have_supergfx; then
+            echo "supergfxctl/supergfxd not available" >&2
+            exit 1
+        fi
+        supergfxctl -m "$2"
+        ;;
+    *)
+        echo "usage: gfx-ctl status|set <Mode>" >&2
+        exit 1
+        ;;
+esac

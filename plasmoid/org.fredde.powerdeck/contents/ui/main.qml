@@ -38,6 +38,7 @@ PlasmoidItem {
 
         property string sensorLabel
         property int temp: -1
+        property int watts: -1
         readonly property color heat: temp < 0 ? Kirigami.Theme.disabledTextColor
             : temp >= 85 ? Theme.red
             : temp >= 70 ? Theme.amber
@@ -75,6 +76,14 @@ PlasmoidItem {
                 font.weight: Font.Bold
                 font.pixelSize: Kirigami.Theme.smallFont.pixelSize
             }
+
+            PC3.Label {
+                visible: pill.watts >= 0
+                text: i18n("%1 W", pill.watts)
+                color: Kirigami.Theme.disabledTextColor
+                font.weight: Font.DemiBold
+                font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
+            }
         }
     }
 
@@ -97,9 +106,27 @@ PlasmoidItem {
 
     property int cpuTemp: -1
     property int gpuTemp: -1
+    property int cpuWatts: -1
+    property int gpuWatts: -1
 
     property int chargeLimit: 100
     property bool chargeSliderPressed: false
+
+    property string batteryState: "unknown"
+    property int batteryPercent: -1
+    property int batteryMinutes: -1
+    property int batteryWatts: -1
+    property bool onAC: false
+    property bool acKnown: false
+
+    property string gfxMode: "none"
+    property string gfxPendingMode: "none"
+    property string gfxPendingAction: "none"
+    property var gfxSupported: []
+    // mode awaiting user confirmation in the overlay dialog
+    property string gfxTarget: ""
+    // last mode actually submitted, for the success notification
+    property string gfxTargetApplied: ""
 
     property string refreshMode: "high"
     property int refreshLowHz: 60
@@ -114,6 +141,8 @@ PlasmoidItem {
     readonly property string refreshScriptPath: binDir + "/refresh-ctl"
     readonly property string tempScriptPath: binDir + "/temp-ctl"
     readonly property string chargeScriptPath: binDir + "/charge-ctl"
+    readonly property string batteryScriptPath: binDir + "/battery-ctl"
+    readonly property string gfxScriptPath: binDir + "/gfx-ctl"
     readonly property var profiles: ["extreme", "power", "balanced", "performance"]
 
     readonly property var profileData: ({
@@ -161,14 +190,58 @@ PlasmoidItem {
         }
     }
 
+    function formatMinutes(m) {
+        if (m < 0) return ""
+        var h = Math.floor(m / 60)
+        var mm = m % 60
+        return h > 0 ? i18n("%1h %2m", h, mm) : i18n("%1m", mm)
+    }
+
+    function gfxLabel(mode) {
+        if (mode === "Integrated") return i18n("Integrated")
+        if (mode === "Hybrid") return i18n("Hybrid")
+        if (mode === "AsusMuxDgpu") return i18n("dGPU (MUX)")
+        return mode
+    }
+
+    function notify(summary, body) {
+        if (!Plasmoid.configuration.showNotifications) return
+        // notify-send is near-universal on Plasma systems; quietly do
+        // nothing when missing. Single quotes are stripped from the
+        // controlled strings to keep shell quoting trivially safe.
+        var s = String(summary).replace(/'/g, "")
+        var b = String(body || "").replace(/'/g, "")
+        execDataSource.connectSource(
+            "command -v notify-send >/dev/null && notify-send -a 'Power Deck'"
+            + " -i preferences-system-power-management -t 3500 '" + s + "' '" + b + "'")
+    }
+
     Plasmoid.icon: "preferences-system-power-management"
     Plasmoid.status: PlasmaCore.Types.PassiveStatus
 
     toolTipMainText: i18n("Power Deck — %1", dataFor(currentProfile).name)
-    toolTipSubText: i18n("CPU %1 · GPU %2 · %3 Hz",
-        cpuTemp >= 0 ? i18n("%1°C", cpuTemp) : i18n("—"),
-        gpuTemp >= 0 ? i18n("%1°C", gpuTemp) : i18n("—"),
-        refreshCurrentHz)
+    toolTipSubText: {
+        var line1 = i18n("CPU %1 · GPU %2 · %3 Hz",
+            cpuTemp >= 0 ? i18n("%1°C", cpuTemp) : i18n("—"),
+            gpuTemp >= 0 ? i18n("%1°C", gpuTemp) : i18n("—"),
+            refreshCurrentHz)
+        if (batteryPercent < 0) return line1
+        var line2
+        if (batteryState === "charging") {
+            line2 = batteryMinutes >= 0
+                ? i18n("Battery %1% — charging, %2 to full", batteryPercent, formatMinutes(batteryMinutes))
+                : i18n("Battery %1% — charging", batteryPercent)
+        } else if (batteryState === "discharging") {
+            line2 = batteryMinutes >= 0
+                ? i18n("Battery %1% — %2 remaining", batteryPercent, formatMinutes(batteryMinutes))
+                : i18n("Battery %1% — on battery", batteryPercent)
+            if (batteryWatts >= 0) line2 += i18n(" · drawing %1 W", batteryWatts)
+        } else {
+            line2 = onAC ? i18n("Battery %1% — plugged in", batteryPercent)
+                         : i18n("Battery %1%", batteryPercent)
+        }
+        return line1 + "\n" + line2
+    }
 
     switchWidth: Kirigami.Units.gridUnit * 19
     switchHeight: fullRepresentationItem && fullRepresentationItem.implicitHeight > 0
@@ -181,6 +254,20 @@ PlasmoidItem {
         connectedSources: []
 
         onNewData: function(sourceName, data) {
+            // Mode switches need explicit success/failure feedback, unlike
+            // the fire-and-forget status polls below.
+            if (sourceName.indexOf("gfx-ctl set") !== -1) {
+                if (data["exit code"] === 0) {
+                    root.notify(i18n("GPU mode: %1", root.gfxLabel(root.gfxTargetApplied)),
+                        i18n("Reboot to apply the new graphics mode"))
+                } else {
+                    root.notify(i18n("GPU mode switch failed"),
+                        i18n("Check that supergfxd is running"))
+                }
+                connectSource(root.gfxScriptPath + " status")
+                disconnectSource(sourceName)
+                return
+            }
             if (data["exit code"] === 0) {
                 var output = data["stdout"].trim()
                 if (sourceName.indexOf("anime-ctl") !== -1) {
@@ -242,6 +329,51 @@ PlasmoidItem {
                         root.cpuTemp = isNaN(ct) ? -1 : ct
                         root.gpuTemp = isNaN(gt) ? -1 : gt
                     }
+                    if (tparts.length >= 4) {
+                        var cw = parseInt(tparts[2])
+                        var gw = parseInt(tparts[3])
+                        root.cpuWatts = isNaN(cw) ? -1 : cw
+                        root.gpuWatts = isNaN(gw) ? -1 : gw
+                    }
+                } else if (sourceName.indexOf("battery-ctl") !== -1) {
+                    var bparts = output.split(" ")
+                    if (bparts.length >= 4) {
+                        root.batteryState = bparts[0]
+                        var bp = parseInt(bparts[1])
+                        var bm = parseInt(bparts[2])
+                        root.batteryPercent = isNaN(bp) ? -1 : bp
+                        root.batteryMinutes = isNaN(bm) ? -1 : bm
+                        var bw = bparts.length >= 5 ? parseInt(bparts[4]) : NaN
+                        root.batteryWatts = isNaN(bw) ? -1 : bw
+                        var nowAC = (bparts[3] === "1")
+                        if (root.acKnown && nowAC !== root.onAC) {
+                            if (nowAC) {
+                                root.notify(i18n("Plugged in"),
+                                    root.batteryPercent >= 0
+                                        ? i18n("Battery at %1%", root.batteryPercent) : "")
+                            } else {
+                                var left = root.formatMinutes(root.batteryMinutes)
+                                root.notify(i18n("On battery"),
+                                    root.batteryPercent >= 0
+                                        ? (left.length > 0
+                                            ? i18n("Battery at %1% — about %2 remaining", root.batteryPercent, left)
+                                            : i18n("Battery at %1%", root.batteryPercent))
+                                        : "")
+                            }
+                        }
+                        root.onAC = nowAC
+                        root.acKnown = true
+                    }
+                } else if (sourceName.indexOf("gfx-ctl") !== -1) {
+                    if (sourceName.indexOf("status") !== -1) {
+                        var gparts = output.split(" ")
+                        if (gparts.length >= 4) {
+                            root.gfxMode = gparts[0]
+                            root.gfxPendingMode = gparts[1]
+                            root.gfxPendingAction = gparts[2]
+                            root.gfxSupported = (gparts[3] === "none") ? [] : gparts[3].split(",")
+                        }
+                    }
                 } else if (sourceName.indexOf("charge-ctl") !== -1) {
                     if (sourceName.indexOf("status") !== -1) {
                         var cl = parseInt(output)
@@ -275,6 +407,8 @@ PlasmoidItem {
         previousProfile = currentProfile
         currentProfile = profile
         switchReset.restart()
+        notify(i18n("Power profile: %1", dataFor(profile).name),
+            dataFor(profile).desc)
     }
 
     function cycleProfile(direction) {
@@ -333,6 +467,20 @@ PlasmoidItem {
         execDataSource.connectSource(chargeScriptPath + " " + limit)
     }
 
+    function chargeOneshot() {
+        execDataSource.connectSource(chargeScriptPath + " oneshot")
+        notify(i18n("One-shot full charge"),
+            i18n("Charging to 100% once — the %1% limit returns afterwards", chargeLimit))
+    }
+
+    function applyGfxMode(mode, rebootAfter) {
+        gfxTarget = ""
+        gfxTargetApplied = mode
+        var cmd = gfxScriptPath + " set " + mode
+        if (rebootAfter) cmd += " && systemctl reboot"
+        execDataSource.connectSource(cmd)
+    }
+
     function setRefreshMode(mode) {
         refreshMode = mode
         execDataSource.connectSource(refreshScriptPath + " " + mode)
@@ -353,6 +501,8 @@ PlasmoidItem {
         execDataSource.connectSource(refreshScriptPath + " status")
         execDataSource.connectSource(tempScriptPath)
         execDataSource.connectSource(chargeScriptPath + " status")
+        execDataSource.connectSource(batteryScriptPath + " status")
+        execDataSource.connectSource(gfxScriptPath + " status")
     }
 
     Timer {
@@ -382,6 +532,13 @@ PlasmoidItem {
                 anchors.centerIn: parent
                 spacing: Kirigami.Units.smallSpacing
 
+                // 0 = icon, 1 = icon + profile, 2 = icon + battery,
+                // 3 = icon + profile + battery
+                readonly property int mode: Plasmoid.configuration.compactMode
+                readonly property bool showProfile: mode === 1 || mode === 3
+                readonly property bool showBattery: (mode === 2 || mode === 3)
+                    && root.batteryPercent >= 0
+
                 ProfileIconBadge {
                     iconSource: dataFor(currentProfile).icon
                     accentColor: dataFor(currentProfile).accent
@@ -390,11 +547,23 @@ PlasmoidItem {
                 }
 
                 PC3.Label {
+                    visible: compactRow.showProfile
                     text: dataFor(currentProfile).label
                     color: Kirigami.Theme.textColor
                     font.weight: Font.DemiBold
                     font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                     horizontalAlignment: Text.AlignLeft
+                }
+
+                PC3.Label {
+                    visible: compactRow.showBattery
+                    text: i18n("%1%", root.batteryPercent)
+                    // green while charging/plugged, red when low on battery
+                    color: root.onAC ? Theme.green
+                        : (root.batteryPercent <= 20 ? Theme.redBright : Kirigami.Theme.textColor)
+                    font.weight: Font.DemiBold
+                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                    Behavior on color { ColorAnimation { duration: Theme.durMed } }
                 }
             }
         }
@@ -454,6 +623,39 @@ PlasmoidItem {
                     }
                 }
 
+                // live battery readout
+                Rectangle {
+                    visible: root.batteryPercent >= 0
+                    readonly property color batColor: root.batteryState === "charging" ? Theme.green
+                        : (root.batteryState === "discharging" && root.batteryPercent <= 20) ? Theme.red
+                        : root.onAC ? Theme.green
+                        : Theme.teal
+                    Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
+                    Layout.preferredWidth: batLabel.implicitWidth + Kirigami.Units.largeSpacing * 2
+                    radius: height / 2
+                    color: Theme.alpha(batColor, 0.12)
+                    border.width: 1
+                    border.color: Theme.alpha(batColor, 0.35)
+                    Behavior on border.color { ColorAnimation { duration: Theme.durMed } }
+
+                    PC3.Label {
+                        id: batLabel
+                        anchors.centerIn: parent
+                        text: {
+                            var t = i18n("%1%", root.batteryPercent)
+                            var left = root.formatMinutes(root.batteryMinutes)
+                            if (root.batteryState === "discharging" && left.length > 0)
+                                return t + " · " + left
+                            if (root.batteryState === "charging")
+                                return left.length > 0 ? t + " ↑ " + left : t + " ↑"
+                            return t
+                        }
+                        color: parent.batColor
+                        font.weight: Font.DemiBold
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                    }
+                }
+
                 // live refresh-rate readout
                 Rectangle {
                     Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
@@ -482,11 +684,50 @@ PlasmoidItem {
                 TempPill {
                     sensorLabel: i18n("CPU")
                     temp: root.cpuTemp
+                    watts: root.cpuWatts
                 }
 
                 TempPill {
                     sensorLabel: i18n("GPU")
                     temp: root.gpuTemp
+                    watts: root.gpuWatts
+                }
+
+                // total system drain straight from the battery, the only
+                // number that truly covers CPU + GPU + everything else
+                Rectangle {
+                    id: drawPill
+                    visible: root.batteryState === "discharging" && root.batteryWatts >= 0
+                    readonly property color drainColor: root.batteryWatts >= 35 ? Theme.red
+                        : root.batteryWatts >= 20 ? Theme.amber
+                        : Theme.green
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.4)
+                    radius: height / 2
+                    color: Theme.alpha(drainColor, 0.10)
+                    border.width: 1
+                    border.color: Theme.alpha(drainColor, 0.3)
+                    Behavior on border.color { ColorAnimation { duration: Theme.durSlow } }
+
+                    RowLayout {
+                        anchors.centerIn: parent
+                        spacing: Kirigami.Units.smallSpacing
+
+                        PC3.Label {
+                            text: i18n("DRAW")
+                            color: Kirigami.Theme.disabledTextColor
+                            font.weight: Font.DemiBold
+                            font.letterSpacing: 1.2
+                            font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
+                        }
+
+                        PC3.Label {
+                            text: i18n("%1 W", root.batteryWatts)
+                            color: drawPill.drainColor
+                            font.weight: Font.Bold
+                            font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        }
+                    }
                 }
             }
 
@@ -510,6 +751,47 @@ PlasmoidItem {
                         burstEffect: dataFor(modelData).burst || "pulse"
                         isActive: currentProfile === modelData
                         onClicked: setProfile(modelData)
+                    }
+                }
+            }
+
+            // ================= graphics =================
+            SectionCard {
+                visible: root.gfxSupported.length > 0
+
+                SectionHeader {
+                    title: i18n("GRAPHICS")
+                    iconSource: Qt.resolvedUrl("../images/gpu.svg")
+                    active: true
+
+                    PC3.Label {
+                        visible: root.gfxPendingMode !== "none" || root.gfxPendingAction !== "none"
+                        text: i18n("Reboot to apply")
+                        color: Theme.amber
+                        font.weight: Font.DemiBold
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+
+                    Repeater {
+                        model: root.gfxSupported
+
+                        AnimeChip {
+                            required property string modelData
+                            label: root.gfxLabel(modelData)
+                            isActive: root.gfxPendingMode !== "none"
+                                ? root.gfxPendingMode === modelData
+                                : root.gfxMode === modelData
+                            onClicked: {
+                                if (modelData !== root.gfxMode && modelData !== root.gfxPendingMode) {
+                                    root.gfxTarget = modelData
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -789,6 +1071,13 @@ PlasmoidItem {
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                     }
                 }
+
+                AnimeChip {
+                    visible: root.chargeLimit < 100
+                    label: i18n("Charge to 100% once")
+                    accentColor: Theme.amber
+                    onClicked: chargeOneshot()
+                }
             }
 
             // ================= footer =================
@@ -801,6 +1090,82 @@ PlasmoidItem {
                 opacity: 0.5
                 horizontalAlignment: Text.AlignHCenter
                 elide: Text.ElideRight
+            }
+        }
+
+        // ============ GPU mode confirmation overlay ============
+        Rectangle {
+            anchors.fill: parent
+            z: 100
+            visible: root.gfxTarget !== ""
+            color: Theme.alpha(Kirigami.Theme.backgroundColor, 0.85)
+
+            // swallow clicks so the popup behind stays inert
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: {}
+                onWheel: function(wheel) { wheel.accepted = true }
+            }
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: parent.width - Kirigami.Units.largeSpacing * 4
+                height: confirmColumn.implicitHeight + Kirigami.Units.largeSpacing * 3
+                radius: Kirigami.Units.smallSpacing * 1.5
+                color: Kirigami.Theme.backgroundColor
+                border.width: 1
+                border.color: Theme.alpha(Theme.red, 0.4)
+
+                ColumnLayout {
+                    id: confirmColumn
+                    anchors.fill: parent
+                    anchors.margins: Kirigami.Units.largeSpacing * 1.5
+                    spacing: Kirigami.Units.smallSpacing * 1.5
+
+                    PC3.Label {
+                        Layout.fillWidth: true
+                        text: i18n("SWITCH GPU MODE")
+                        color: Theme.alpha(Theme.red, 0.9)
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: 2.2
+                    }
+
+                    PC3.Label {
+                        Layout.fillWidth: true
+                        text: i18n("Switch graphics to %1? A reboot is required before the new mode takes effect.",
+                            root.gfxLabel(root.gfxTarget))
+                        color: Kirigami.Theme.textColor
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize
+                        wrapMode: Text.WordWrap
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.topMargin: Kirigami.Units.smallSpacing
+                        spacing: Kirigami.Units.smallSpacing
+
+                        AnimeChip {
+                            label: i18n("Cancel")
+                            onClicked: root.gfxTarget = ""
+                        }
+
+                        AnimeChip {
+                            label: i18n("Switch")
+                            accentColor: Theme.amber
+                            isActive: true
+                            onClicked: root.applyGfxMode(root.gfxTarget, false)
+                        }
+
+                        AnimeChip {
+                            label: i18n("Switch + Reboot")
+                            accentColor: Theme.red
+                            isActive: true
+                            onClicked: root.applyGfxMode(root.gfxTarget, true)
+                        }
+                    }
+                }
             }
         }
     }

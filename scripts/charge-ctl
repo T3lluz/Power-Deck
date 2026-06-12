@@ -3,6 +3,7 @@
 #
 # Usage:
 #   charge-ctl status     print the current limit (defaults to 100)
+#   charge-ctl oneshot    charge to 100% once without changing the limit
 #   charge-ctl <20-100>   set the limit (asusctl, with a sysfs fallback)
 set -u
 
@@ -29,9 +30,17 @@ if [ "$cmd" = "status" ]; then
     exit 0
 fi
 
+if [ "$cmd" = "oneshot" ]; then
+    if command -v asusctl >/dev/null 2>&1 && asusctl battery oneshot >/dev/null 2>&1; then
+        exit 0
+    fi
+    echo "one-shot charge failed (asusd not running?)" >&2
+    exit 1
+fi
+
 case "$cmd" in
     ''|*[!0-9]*)
-        echo "usage: charge-ctl status|<20-100>" >&2
+        echo "usage: charge-ctl status|oneshot|<20-100>" >&2
         exit 1
         ;;
 esac
