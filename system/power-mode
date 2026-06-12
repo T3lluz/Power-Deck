@@ -1,0 +1,30 @@
+#!/bin/bash
+# Root helper for the ghelper-profile widget (invoked via sudo -n,
+# allowed passwordless by /etc/sudoers.d/power-mode).
+# extreme = max battery savings, normal = stock behavior.
+#
+# Note: CPU boost is NOT touched here — power-profiles-daemon manages
+# per-policy boost on amd_pstate, and writing the global boost knob makes
+# PPD profile switches fail with EINVAL (profile then "jumps back").
+# Panel ABM is also left alone on extreme: changing it visibly shifts
+# screen brightness on every profile switch.
+
+PANEL=$(ls /sys/class/drm/card*-eDP-*/amdgpu/panel_power_savings 2>/dev/null | head -1)
+WIFI=$(iw dev 2>/dev/null | awk '/Interface/{print $2; exit}')
+
+case "$1" in
+    extreme)
+        echo powersave > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
+        [ -n "$WIFI" ] && iw dev "$WIFI" set power_save on
+        ;;
+    normal)
+        [ -n "$PANEL" ] && echo 0 > "$PANEL"
+        echo default > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
+        [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off
+        ;;
+    *)
+        echo "Usage: $0 extreme|normal" >&2
+        exit 1
+        ;;
+esac
+exit 0

@@ -1,0 +1,4 @@
+# Allow the power profile helper to run without a password prompt.
+# Install with: sudo cp system/power-mode.sudoers /etc/sudoers.d/power-mode
+#               sudo chmod 440 /etc/sudoers.d/power-mode
+%wheel ALL=(root) NOPASSWD: /usr/local/bin/power-mode

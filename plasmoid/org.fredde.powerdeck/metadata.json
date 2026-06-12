@@ -1,0 +1,21 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "fredde",
+                "Email": "fstalsberg@gmail.com"
+            }
+        ],
+        "Description": "Switch power modes and control AniMe, keyboard lighting, and FN-lock from the panel.",
+        "Icon": "preferences-system-power-management",
+        "Id": "org.fredde.powerdeck",
+        "License": "MIT",
+        "Name": "Power Deck",
+        "Version": "1.0.0",
+        "Website": "https://github.com/T3lluz/Power-Deck"
+    },
+    "X-Plasma-API": "declarativeappletscript",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml"
+}

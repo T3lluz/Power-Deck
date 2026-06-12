@@ -1,0 +1,13 @@
+[Unit]
+Description=Turn off keyboard backlight after input inactivity
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+EnvironmentFile=%h/.config/kbd-idle.conf
+ExecStart=/usr/bin/swayidle -w timeout ${TIMEOUT} "%h/.local/bin/kbd-idle-helper off" resume "%h/.local/bin/kbd-idle-helper on"
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

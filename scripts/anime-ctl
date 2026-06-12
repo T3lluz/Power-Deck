@@ -1,0 +1,58 @@
+#!/bin/bash
+# anime-ctl - AniMe Matrix control for the Plasma profile widget
+# Usage: anime-ctl [on|off|banner|logo|battery-off <on|off>|status]
+
+STATE_DIR="$HOME/.local/state"
+POWER_FILE="$STATE_DIR/anime-power"
+SHAPE_FILE="$STATE_DIR/anime-shape"
+ASUSD_ANIME_CONF="/etc/asusd/anime.ron"
+mkdir -p "$STATE_DIR"
+
+BOOT_ANIM="GlitchConstruction"
+SLEEP_ANIM="BannerSwipe"
+SHUTDOWN_ANIM="GlitchOut"
+
+apply_shape() {
+    local awake="BinaryBannerScroll"
+    [ "$1" = "logo" ] && awake="RogLogoGlitch"
+    asusctl anime set-builtins \
+        --boot "$BOOT_ANIM" --awake "$awake" \
+        --sleep "$SLEEP_ANIM" --shutdown "$SHUTDOWN_ANIM" --set true
+    echo "$1" > "$SHAPE_FILE"
+}
+
+case "$1" in
+    on)
+        asusctl anime --enable-display true
+        echo on > "$POWER_FILE"
+        shape=$(cat "$SHAPE_FILE" 2>/dev/null)
+        [ "$shape" = "logo" ] || shape="banner"
+        apply_shape "$shape"
+        ;;
+    off)
+        asusctl anime --enable-display false
+        echo off > "$POWER_FILE"
+        ;;
+    banner|logo)
+        apply_shape "$1"
+        ;;
+    battery-off)
+        [ "$2" = "on" ] && val=true || val=false
+        asusctl anime --off-when-unplugged "$val"
+        ;;
+    status)
+        shape=$(cat "$SHAPE_FILE" 2>/dev/null)
+        [ "$shape" = "logo" ] || shape="banner"
+        power=$(cat "$POWER_FILE" 2>/dev/null || echo on)
+        if grep -q 'off_when_unplugged: true' "$ASUSD_ANIME_CONF" 2>/dev/null; then
+            battery="yes"
+        else
+            battery="no"
+        fi
+        echo "$power $shape $battery"
+        ;;
+    *)
+        echo "Usage: $0 [on|off|banner|logo|battery-off <on|off>|status]"
+        exit 1
+        ;;
+esac

@@ -1,0 +1,52 @@
+#!/bin/bash
+# fnlock-ctl - Fn lock control for the Plasma profile widget
+# Uses g-helper-linux-style software remapping (evdev grab + uinput).
+# Usage: fnlock-ctl [on|off|status|restore]
+
+STATE_FILE="$HOME/.local/state/fnlock"
+SERVICE="fnlock-daemon.service"
+mkdir -p "$HOME/.local/state"
+
+ensure_service() {
+    systemctl --user enable --now "$SERVICE" >/dev/null 2>&1
+}
+
+reload_daemon() {
+    if systemctl --user is-active --quiet "$SERVICE"; then
+        pid=$(systemctl --user show -p MainPID --value "$SERVICE" 2>/dev/null)
+        if [ -n "$pid" ] && [ "$pid" -gt 0 ] 2>/dev/null; then
+            kill -HUP "$pid" 2>/dev/null && return
+        fi
+    fi
+    systemctl --user restart "$SERVICE" >/dev/null 2>&1 || ensure_service
+}
+
+case "$1" in
+    on)
+        echo off > "$STATE_FILE"
+        ensure_service
+        reload_daemon
+        ;;
+    off)
+        echo on > "$STATE_FILE"
+        ensure_service
+        reload_daemon
+        ;;
+    restore)
+        [ -f "$STATE_FILE" ] || echo on > "$STATE_FILE"
+        ensure_service
+        reload_daemon
+        ;;
+    status)
+        s=$(cat "$STATE_FILE" 2>/dev/null)
+        if [ "$s" = "off" ]; then
+            echo on
+        else
+            echo off
+        fi
+        ;;
+    *)
+        echo "Usage: $0 [on|off|status|restore]"
+        exit 1
+        ;;
+esac

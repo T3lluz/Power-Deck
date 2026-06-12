@@ -1,0 +1,53 @@
+#!/bin/bash
+# kbd-idle-ctl - Keyboard backlight idle timeout control for the Plasma widget
+# Usage: kbd-idle-ctl [on|off|timeout <seconds>|keep-ac <on|off>|brightness <0-3>|status]
+
+CONF="$HOME/.config/kbd-idle.conf"
+SERVICE="kbd-backlight-idle.service"
+KBD_DEV="asus::kbd_backlight"
+
+[ -f "$CONF" ] || printf 'TIMEOUT=60\nKEEP_ON_AC=0\n' > "$CONF"
+grep -q '^KEEP_ON_AC=' "$CONF" || echo 'KEEP_ON_AC=0' >> "$CONF"
+
+case "$1" in
+    on)
+        systemctl --user enable --now "$SERVICE" >/dev/null 2>&1
+        ;;
+    off)
+        systemctl --user disable --now "$SERVICE" >/dev/null 2>&1
+        # make sure the backlight is left on
+        brightnessctl -d 'asus::kbd_backlight' set 1 >/dev/null 2>&1
+        ;;
+    timeout)
+        case "$2" in
+            ''|*[!0-9]*) echo "timeout must be a number of seconds"; exit 1 ;;
+        esac
+        sed -i "s/^TIMEOUT=.*/TIMEOUT=$2/" "$CONF"
+        systemctl --user try-restart "$SERVICE" >/dev/null 2>&1
+        ;;
+    keep-ac)
+        [ "$2" = "on" ] && val=1 || val=0
+        sed -i "s/^KEEP_ON_AC=.*/KEEP_ON_AC=$val/" "$CONF"
+        ;;
+    brightness)
+        case "$2" in
+            0|1|2|3) brightnessctl -d "$KBD_DEV" set "$2" >/dev/null 2>&1 ;;
+            *) echo "brightness must be 0-3"; exit 1 ;;
+        esac
+        ;;
+    status)
+        . "$CONF"
+        if systemctl --user is-active --quiet "$SERVICE"; then
+            state="on"
+        else
+            state="off"
+        fi
+        [ "${KEEP_ON_AC:-0}" = "1" ] && ac="yes" || ac="no"
+        bri=$(brightnessctl -d "$KBD_DEV" get 2>/dev/null)
+        echo "$state $TIMEOUT $ac ${bri:-0}"
+        ;;
+    *)
+        echo "Usage: $0 [on|off|timeout <seconds>|keep-ac <on|off>|status]"
+        exit 1
+        ;;
+esac

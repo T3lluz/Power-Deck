@@ -1,0 +1,25 @@
+#!/bin/bash
+# Called by swayidle (kbd-backlight-idle.service) on idle timeout / resume.
+
+CONF="$HOME/.config/kbd-idle.conf"
+[ -f "$CONF" ] && . "$CONF"
+FLAG="${XDG_RUNTIME_DIR:-/tmp}/kbd-idle-off.flag"
+DEV="asus::kbd_backlight"
+
+case "$1" in
+    off)
+        # optionally never turn off while on AC power
+        if [ "${KEEP_ON_AC:-0}" = "1" ] && \
+           [ "$(cat /sys/class/power_supply/ADP0/online 2>/dev/null)" = "1" ]; then
+            exit 0
+        fi
+        brightnessctl -sd "$DEV" set 0 >/dev/null 2>&1 && touch "$FLAG"
+        ;;
+    on)
+        if [ -f "$FLAG" ]; then
+            brightnessctl -rd "$DEV" >/dev/null 2>&1
+            rm -f "$FLAG"
+        fi
+        ;;
+esac
+exit 0
