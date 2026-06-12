@@ -311,11 +311,13 @@ install_root_helper() {
 
 # /etc/sudoers.d is not readable as a normal user, so probe with sudo -n -l
 # (succeeds without a password when the sudoers entry is in place).
-if [ -f /usr/local/bin/power-mode ] && sudo -n -l /usr/local/bin/power-mode normal >/dev/null 2>&1; then
+# An installed helper still gets refreshed when the repo version changed.
+if [ -f /usr/local/bin/power-mode ] && sudo -n -l /usr/local/bin/power-mode normal >/dev/null 2>&1 \
+    && cmp -s "${REPO_ROOT}/system/power-mode" /usr/local/bin/power-mode; then
     step "power-mode already installed"
     ok
 elif { true < /dev/tty; } 2>/dev/null; then
-    printf '  %s\n' "${C_DIM}Extreme mode needs a small root helper (panel dimming, Wi-Fi/PCIe powersave).${C_RESET}"
+    printf '  %s\n' "${C_DIM}Extreme mode needs a small root helper (Wi-Fi/PCIe powersave, dGPU runtime suspend).${C_RESET}"
     printf '  %s' "${C_BOLD}Install it now with sudo? [Y/n] ${C_RESET}"
     read -r reply < /dev/tty || reply="n"
     if [[ "$reply" =~ ^[Nn] ]]; then
@@ -334,6 +336,13 @@ elif { true < /dev/tty; } 2>/dev/null; then
             warn "sudo install failed — Extreme mode extras disabled"
         fi
     fi
+elif command -v pkexec >/dev/null 2>&1 \
+    && run pkexec sh -c "install -m 755 '${REPO_ROOT}/system/power-mode' /usr/local/bin/power-mode \
+        && install -m 440 '${REPO_ROOT}/system/power-mode.sudoers' /etc/sudoers.d/power-mode"; then
+    # No terminal for sudo (e.g. run from a GUI) — polkit shows a graphical
+    # authentication dialog instead.
+    step "power-mode root helper (via polkit)"
+    ok
 else
     step "power-mode root helper"
     warn "no terminal available for sudo — install manually for Extreme mode (see README)"

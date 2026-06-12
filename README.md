@@ -19,8 +19,10 @@ Power Deck brings GHelper-style laptop controls to KDE Plasma. Scroll the panel 
 
 | Mode | Profile | Extras |
 |------|---------|--------|
-| Extreme Saver | power-saver | 60 Hz, Wi-Fi powersave, PCIe ASPM powersave |
-| Power Saver | power-saver | Normal refresh and peripherals |
+| Extreme Saver | power-saver | CPU boost off, 60 Hz, Wi-Fi powersave, PCIe ASPM powersave, NVIDIA dGPU runtime suspend (D3cold) |
+| Power Saver | power-saver | CPU boost off, normal refresh and peripherals |
+
+CPU boost is managed by `power-profiles-daemon`: the `power-saver` profile (used by both saver modes) disables per-policy boost on amd_pstate automatically.
 | Balanced | balanced | Normal extras |
 | Performance | performance | Normal extras |
 

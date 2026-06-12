@@ -12,10 +12,26 @@
 PANEL=$(ls /sys/class/drm/card*-eDP-*/amdgpu/panel_power_savings 2>/dev/null | head -1)
 WIFI=$(iw dev 2>/dev/null | awk '/Interface/{print $2; exit}')
 
+# Force runtime PM on for every NVIDIA PCI function so an idle dGPU can
+# drop to D3cold. supergfxd's udev rules flip power/control back to "on"
+# when the driver unbinds (e.g. switching to Integrated mode), which can
+# leave a driverless dGPU stuck in D0 burning 10-15 W. "auto" is correct
+# whether or not the nvidia driver is bound: bound GPUs runtime-suspend
+# through the driver, driverless ones through the PCI core.
+nvidia_runtime_pm() {
+    local dev
+    for dev in /sys/bus/pci/devices/*; do
+        [ "$(cat "$dev/vendor" 2>/dev/null)" = "0x10de" ] || continue
+        [ -w "$dev/power/control" ] || continue
+        echo auto > "$dev/power/control" 2>/dev/null
+    done
+}
+
 case "$1" in
     extreme)
         echo powersave > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
         [ -n "$WIFI" ] && iw dev "$WIFI" set power_save on
+        nvidia_runtime_pm
         ;;
     normal)
         [ -n "$PANEL" ] && echo 0 > "$PANEL"
