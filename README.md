@@ -127,14 +127,13 @@ fnlock-ctl on|off|status
 
 ## Uninstall
 
+One-liner (stops services, removes the widget, scripts, and config, and offers to remove the root helper):
+
 ```bash
-kpackagetool6 -t Plasma/Applet -r org.fredde.powerdeck
-rm -f ~/.local/bin/{ghelper-profile,anime-ctl,kbd-idle-ctl,kbd-idle-helper,fnlock-ctl,fnlock-daemon.py,ghelper-restore}
-rm -f ~/.config/systemd/user/{kbd-backlight-idle,fnlock-daemon,ghelper-restore}.service
-rm -f ~/.local/share/polkit-1/actions/org.fredde.powerdeck.policy
-sudo rm -f /usr/local/bin/power-mode /etc/sudoers.d/power-mode
-systemctl --user daemon-reload
+curl -fsSL https://raw.githubusercontent.com/T3lluz/Power-Deck/main/install.sh | bash -s -- --uninstall
 ```
+
+Or from a clone: `./install.sh --uninstall`
 
 ## License
 

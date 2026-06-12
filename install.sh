@@ -1,11 +1,27 @@
 #!/usr/bin/env bash
-# Power Deck installer.
+# Power Deck installer / uninstaller.
 #
-# Run from a cloned repo:        ./install.sh
-# Or straight from the network:  curl -fsSL https://raw.githubusercontent.com/T3lluz/Power-Deck/main/install.sh | bash
+# Install from a cloned repo:   ./install.sh
+# Install from the network:     curl -fsSL https://raw.githubusercontent.com/T3lluz/Power-Deck/main/install.sh | bash
+# Uninstall:                    curl -fsSL https://raw.githubusercontent.com/T3lluz/Power-Deck/main/install.sh | bash -s -- --uninstall
 set -euo pipefail
 
 REPO_URL="${POWER_DECK_REPO:-https://github.com/T3lluz/Power-Deck.git}"
+
+ACTION="install"
+for arg in "$@"; do
+    case "$arg" in
+        --uninstall|uninstall|--remove|remove) ACTION="uninstall" ;;
+        --help|-h)
+            echo "Usage: install.sh [--uninstall]"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg (try --help)" >&2
+            exit 1
+            ;;
+    esac
+done
 
 # ---------- visuals ----------
 if [ -t 1 ]; then
@@ -48,6 +64,93 @@ die() {
 run() { "$@" >>"$LOG_FILE" 2>&1; }
 
 banner
+
+# ---------- uninstall ----------
+if [ "$ACTION" = "uninstall" ]; then
+    BIN_DIR="${HOME}/.local/bin"
+    SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
+
+    section "Stopping services"
+    for svc in anime-power-sync fnlock-daemon kbd-backlight-idle ghelper-restore; do
+        step "${svc}.service"
+        run systemctl --user disable --now "${svc}.service" || true
+        ok
+    done
+
+    section "Removing files"
+
+    step "Plasma widget (org.fredde.powerdeck)"
+    if ! kpackagetool6 -t Plasma/Applet -l 2>/dev/null | grep -qx 'org.fredde.powerdeck'; then
+        skipped
+    elif run kpackagetool6 -t Plasma/Applet -r org.fredde.powerdeck; then
+        ok
+    else
+        warn "widget removal failed — remove it from the panel first, then re-run"
+    fi
+
+    step "Helper scripts"
+    rm -f "${BIN_DIR}"/{ghelper-profile,anime-ctl,anime-power-watch,kbd-idle-ctl,kbd-idle-helper,fnlock-ctl,fnlock-daemon.py,ghelper-restore}
+    ok
+
+    step "Systemd user services"
+    rm -f "${SYSTEMD_USER_DIR}"/{anime-power-sync,fnlock-daemon,kbd-backlight-idle,ghelper-restore}.service
+    run systemctl --user daemon-reload
+    ok
+
+    step "Polkit policy"
+    rm -f "${HOME}/.local/share/polkit-1/actions/org.fredde.powerdeck.policy"
+    ok
+
+    step "Saved state"
+    rm -f "${HOME}/.local/state"/{anime-power,anime-shape,ghelper-profile-mode,fnlock}
+    ok
+
+    section "Root helper"
+    if [ -f /usr/local/bin/power-mode ] || [ -f /etc/sudoers.d/power-mode ]; then
+        if { true < /dev/tty; } 2>/dev/null; then
+            printf '  %s' "${C_BOLD}Remove the power-mode root helper (needs sudo)? [Y/n] ${C_RESET}"
+            read -r reply < /dev/tty || reply="n"
+            step "power-mode root helper"
+            if [[ "$reply" =~ ^[Nn] ]]; then
+                skipped
+            elif sudo rm -f /usr/local/bin/power-mode /etc/sudoers.d/power-mode < /dev/tty; then
+                ok
+            else
+                warn "sudo removal failed — remove manually:
+      sudo rm -f /usr/local/bin/power-mode /etc/sudoers.d/power-mode"
+            fi
+        else
+            step "power-mode root helper"
+            warn "no terminal for sudo — remove manually:
+      sudo rm -f /usr/local/bin/power-mode /etc/sudoers.d/power-mode"
+        fi
+    else
+        step "power-mode root helper"
+        skipped
+    fi
+
+    section "Finishing up"
+    step "Restarting Plasma shell"
+    if run systemctl --user try-restart plasma-plasmashell.service; then
+        ok
+    elif command -v kquitapp6 >/dev/null 2>&1; then
+        run kquitapp6 plasmashell || true
+        (setsid plasmashell >>"$LOG_FILE" 2>&1 &)
+        ok
+    else
+        warn "could not restart plasmashell — log out and back in"
+    fi
+
+    printf '\n%s\n' "${C_GREEN}${C_BOLD}  Power Deck removed.${C_RESET}"
+    if [ "${#WARNINGS[@]}" -gt 0 ]; then
+        printf '\n%s\n' "${C_YELLOW}${C_BOLD}  Warnings:${C_RESET}"
+        for w in "${WARNINGS[@]}"; do
+            printf '  %s %s\n' "${C_YELLOW}•${C_RESET}" "$w"
+        done
+    fi
+    printf '\n  %s\n\n' "${C_DIM}Log: ${LOG_FILE}${C_RESET}"
+    exit 0
+fi
 
 # ---------- locate or fetch the repo ----------
 CLEANUP_DIR=""
