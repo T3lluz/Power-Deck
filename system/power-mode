@@ -46,10 +46,12 @@ case "$1" in
     # power-deck-gfx-apply.service commits it into the config at
     # shutdown (after supergfxd stopped) or early boot (before it
     # starts), when no daemon can react to the change.
+    # AsusMuxDgpu is intentionally not accepted: MUX switching does not
+    # work reliably through supergfxd, so the widget no longer offers it.
     gfx-mode)
         case "${2:-}" in
-            Integrated|Hybrid|AsusMuxDgpu|AsusEgpu|Vfio) ;;
-            *) echo "Usage: $0 gfx-mode Integrated|Hybrid|AsusMuxDgpu|AsusEgpu|Vfio" >&2; exit 1 ;;
+            Integrated|Hybrid|AsusEgpu|Vfio) ;;
+            *) echo "Usage: $0 gfx-mode Integrated|Hybrid|AsusEgpu|Vfio" >&2; exit 1 ;;
         esac
         [ -f "$GFX_CONF" ] || { echo "$GFX_CONF not found" >&2; exit 1; }
         cur=$(sed -n 's/.*"mode": "\([A-Za-z]*\)".*/\1/p' "$GFX_CONF" | head -n1)
@@ -71,7 +73,7 @@ case "$1" in
         [ -s "$GFX_PENDING" ] || exit 0
         mode=$(head -n1 "$GFX_PENDING")
         case "$mode" in
-            Integrated|Hybrid|AsusMuxDgpu|AsusEgpu|Vfio) ;;
+            Integrated|Hybrid|AsusEgpu|Vfio) ;;
             *) rm -f "$GFX_PENDING"; exit 0 ;;
         esac
         [ -f "$GFX_CONF" ] || { rm -f "$GFX_PENDING"; exit 0; }

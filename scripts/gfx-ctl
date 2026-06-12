@@ -51,9 +51,16 @@ conf_mode() {
     sed -n 's/.*"mode": "\([A-Za-z]*\)".*/\1/p' "$CONF" 2>/dev/null | head -n1
 }
 
+# AsusMuxDgpu is deliberately hidden: MUX switching does not work
+# reliably through supergfxd on this setup, so the widget only offers
+# Integrated/Hybrid (and eGPU/VFIO where the hardware reports them).
+filter_modes() {
+    sed 's/AsusMuxDgpu,\?//; s/,$//'
+}
+
 supported_modes() {
     local sup
-    sup="$(sgfx -s | tr -d '[] ')"
+    sup="$(sgfx -s | tr -d '[] ' | filter_modes)"
     if [ -n "$sup" ]; then
         mkdir -p "$CACHE_DIR" 2>/dev/null
         printf '%s\n' "$sup" > "$SUP_CACHE" 2>/dev/null
@@ -61,7 +68,7 @@ supported_modes() {
         return 0
     fi
     if [ -s "$SUP_CACHE" ]; then
-        head -n1 "$SUP_CACHE"
+        head -n1 "$SUP_CACHE" | filter_modes
         return 0
     fi
     echo none
@@ -135,8 +142,8 @@ case "${1:-status}" in
         ;;
     set)
         case "${2:-}" in
-            Integrated|Hybrid|AsusMuxDgpu|AsusEgpu|Vfio) ;;
-            *) echo "usage: gfx-ctl set Integrated|Hybrid|AsusMuxDgpu|AsusEgpu|Vfio" >&2; exit 1 ;;
+            Integrated|Hybrid|AsusEgpu|Vfio) ;;
+            *) echo "usage: gfx-ctl set Integrated|Hybrid|AsusEgpu|Vfio" >&2; exit 1 ;;
         esac
         if ! have_supergfx; then
             echo "supergfxctl/supergfxd not available" >&2

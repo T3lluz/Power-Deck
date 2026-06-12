@@ -141,11 +141,11 @@ PlasmoidItem {
     // true while undoing a queued (not yet applied) mode switch
     property bool gfxCancelling: false
 
-    // gfx-ctl queues the mode in supergfxd's config, which is applied
-    // when the daemon starts at the next boot — every change is a reboot
+    // gfx-ctl stages the mode and it is committed to supergfxd's config
+    // at shutdown, applied when the daemon starts at the next boot —
+    // every change is a reboot
     function gfxActionFor(mode) {
-        if (gfxPolicy === "reboot") return "reboot"
-        return (mode === "AsusMuxDgpu" || gfxMode === "AsusMuxDgpu") ? "reboot" : "logout"
+        return gfxPolicy === "reboot" ? "reboot" : "logout"
     }
 
     function gfxPerformAction(action) {

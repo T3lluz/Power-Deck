@@ -11,7 +11,7 @@ Power Deck brings GHelper-style laptop controls to KDE Plasma. Scroll the panel 
 - **CPU & GPU temperatures & power draw** — live readouts in the popup and in the panel-icon tooltip, color-coded by heat
 - **Battery status** — charge %, time remaining, and AC state in the popup header, tooltip, and (optionally) the panel
 - **Battery charge limit** — slider from 80% to 100% (in 5% steps) to extend battery lifespan, plus a one-shot full charge
-- **GPU mode switching** — Integrated / Hybrid / dGPU (queued for next boot), with a live tag showing which GPUs are actually active
+- **GPU mode switching** — Integrated / Hybrid (queued for next boot), with a live tag showing which GPUs are actually active
 - **Notifications** — optional desktop notifications on profile switches, plug/unplug, and GPU mode changes
 - **Configurable panel display** — icon only, icon + profile, icon + battery %, or all three
 - **AniMe Matrix** — toggle display, pick Banner or Logo, auto-off on battery
@@ -40,7 +40,7 @@ The charge limit slider (80–100% in 5% steps) caps how far the battery charges
 
 ### GPU mode
 
-When `supergfxd` is available, a Graphics section lets you switch between Integrated, Hybrid, and dGPU (MUX) modes. A device tag in the header always shows what is live right now — **iGPU only**, **iGPU + dGPU asleep/on**, or **dGPU drives display** — detected straight from the hardware (PCI bus + which card drives the panel), so the widget never shows a mode that isn't actually running. Switching opens a confirmation dialog — cancel and nothing changes; confirm with **Switch + Reboot now** or **Switch, reboot later** (a pulsing "… after reboot" chip stays visible until you do, and clicking the current mode un-queues the switch).
+When `supergfxd` is available, a Graphics section lets you switch between Integrated and Hybrid modes (the dGPU MUX mode is deliberately not offered — MUX switching through supergfxd is unreliable). A device tag in the header always shows what is live right now — **iGPU only**, **iGPU + dGPU asleep/on**, or **dGPU drives display** — detected straight from the hardware (PCI bus + which card drives the panel), so the widget never shows a mode that isn't actually running. Switching opens a confirmation dialog — cancel and nothing changes; confirm with **Switch + Reboot now** or **Switch, reboot later** (a pulsing "… after reboot" chip stays visible until you do, and clicking the current mode un-queues the switch).
 
 Mode changes are staged in `/var/lib/power-deck/gfx-pending` (via the `power-mode` root helper) and committed into `/etc/supergfxd.conf` by `power-deck-gfx-apply.service` at shutdown — after supergfxd has stopped — so the daemon applies the new mode cleanly when it starts at the next boot. The widget deliberately never calls `supergfxctl -m`: even with `always_reboot` enabled, supergfxd reacts to it by attempting a live driver unload (`rmmod nvidia_drm`) that always fails while a desktop session is running, after which the daemon wedges on a PCI unbind in uninterruptible kernel state and the next reboot hangs on a black screen. Editing the config under a running daemon is equally unsafe (any daemon restart live-applies it), which is why the commit is deferred to shutdown.
 

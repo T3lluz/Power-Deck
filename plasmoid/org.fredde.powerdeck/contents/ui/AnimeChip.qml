@@ -16,9 +16,26 @@ Item {
 
     signal clicked()
 
+    // sibling chips read these to agree on a common width
+    readonly property bool isAnimeChip: true
+    readonly property real labelWidth: labelText.implicitWidth
+
+    // widest label among all chips sharing this row/column, so every
+    // pill in a group gets the same minimum and the layout splits the
+    // space evenly instead of giving longer labels wider pills
+    readonly property real groupLabelWidth: {
+        var w = labelWidth
+        if (!parent) return w
+        for (var i = 0; i < parent.children.length; i++) {
+            var c = parent.children[i]
+            if (c && c.isAnimeChip && c.labelWidth > w) w = c.labelWidth
+        }
+        return w
+    }
+
     Layout.fillWidth: true
-    // never squeeze the label against the pill border
-    Layout.minimumWidth: labelText.implicitWidth + Kirigami.Units.largeSpacing * 2
+    // never squeeze the longest sibling label against the pill border
+    Layout.minimumWidth: groupLabelWidth + Kirigami.Units.largeSpacing * 2
     Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.6)
     opacity: chipEnabled ? 1.0 : Theme.offOpacity
     Behavior on opacity {
