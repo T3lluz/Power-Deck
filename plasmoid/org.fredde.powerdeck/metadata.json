@@ -12,7 +12,7 @@
         "Id": "org.fredde.powerdeck",
         "License": "MIT",
         "Name": "Power Deck",
-        "Version": "1.0.0",
+        "Version": "1.1.0",
         "Website": "https://github.com/T3lluz/Power-Deck"
     },
     "X-Plasma-API": "declarativeappletscript",

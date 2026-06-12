@@ -89,7 +89,7 @@ if [ "$ACTION" = "uninstall" ]; then
     fi
 
     step "Helper scripts"
-    rm -f "${BIN_DIR}"/{ghelper-profile,anime-ctl,anime-power-watch,kbd-idle-ctl,kbd-idle-helper,fnlock-ctl,fnlock-daemon.py,ghelper-restore}
+    rm -f "${BIN_DIR}"/{ghelper-profile,anime-ctl,anime-power-watch,kbd-idle-ctl,kbd-idle-helper,fnlock-ctl,fnlock-daemon.py,ghelper-restore,refresh-ctl}
     ok
 
     step "Systemd user services"
@@ -102,7 +102,7 @@ if [ "$ACTION" = "uninstall" ]; then
     ok
 
     step "Saved state"
-    rm -f "${HOME}/.local/state"/{anime-power,anime-shape,ghelper-profile-mode,fnlock}
+    rm -f "${HOME}/.local/state"/{anime-power,anime-shape,ghelper-profile-mode,fnlock,refresh-auto,refresh-mode}
     ok
 
     section "Root helper"
@@ -196,6 +196,7 @@ recommend asusctl          "AniMe Matrix controls will not work"
 recommend brightnessctl    "keyboard backlight controls will not work"
 recommend swayidle         "keyboard idle timer will not work"
 recommend udevadm          "AniMe AC sync falls back to polling"
+recommend kscreen-doctor   "refresh-rate switching will not work"
 
 step "python3 + evdev (FN-lock daemon)"
 if command -v python3 >/dev/null 2>&1 && run python3 -c "import evdev"; then ok; else
@@ -214,7 +215,7 @@ mkdir -p "$BIN_DIR" "$SYSTEMD_USER_DIR" "${HOME}/.local/state" \
 
 step "Helper scripts -> ~/.local/bin"
 for script in ghelper-profile anime-ctl anime-power-watch kbd-idle-ctl \
-    kbd-idle-helper fnlock-ctl fnlock-daemon.py ghelper-restore; do
+    kbd-idle-helper fnlock-ctl fnlock-daemon.py ghelper-restore refresh-ctl; do
     install -m 755 "${REPO_ROOT}/scripts/${script}" "${BIN_DIR}/${script}"
 done
 ok
@@ -250,6 +251,26 @@ else
 fi
 ok
 
+# ---------- defaults ----------
+section "Applying defaults"
+
+step "Fn-lock off"
+echo off > "${HOME}/.local/state/fnlock"
+ok
+
+step "AniMe Matrix off"
+echo off > "${HOME}/.local/state/anime-power"
+ok
+
+step "Keyboard light timer off"
+run systemctl --user disable --now kbd-backlight-idle.service || true
+ok
+
+step "Refresh rate mode: high"
+rm -f "${HOME}/.local/state/refresh-auto"
+[ -f "${HOME}/.local/state/refresh-mode" ] || echo high > "${HOME}/.local/state/refresh-mode"
+ok
+
 # ---------- services ----------
 section "Enabling services"
 
@@ -264,6 +285,21 @@ enable_service ghelper-restore.service
 enable_service anime-power-sync.service
 enable_service fnlock-daemon.service
 
+# enable --now does not restart services that were already running, so make
+# sure the freshly installed scripts and default state are actually in use.
+step "Reloading running daemons"
+run systemctl --user try-restart anime-power-sync.service fnlock-daemon.service || true
+ok
+
+step "Syncing AniMe Matrix display"
+if command -v asusctl >/dev/null 2>&1; then
+    if run "${BIN_DIR}/anime-ctl" sync; then ok; else
+        warn "could not sync the AniMe Matrix display (is asusd running?)"
+    fi
+else
+    skipped
+fi
+
 # ---------- optional root helper (Extreme mode) ----------
 section "Root helper (Extreme mode extras)"
 
@@ -272,7 +308,9 @@ install_root_helper() {
         && run sudo install -m 440 "${REPO_ROOT}/system/power-mode.sudoers" /etc/sudoers.d/power-mode
 }
 
-if [ -f /usr/local/bin/power-mode ] && [ -f /etc/sudoers.d/power-mode ]; then
+# /etc/sudoers.d is not readable as a normal user, so probe with sudo -n -l
+# (succeeds without a password when the sudoers entry is in place).
+if [ -f /usr/local/bin/power-mode ] && sudo -n -l /usr/local/bin/power-mode normal >/dev/null 2>&1; then
     step "power-mode already installed"
     ok
 elif { true < /dev/tty; } 2>/dev/null; then

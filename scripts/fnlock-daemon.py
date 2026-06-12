@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Software Fn-lock remapper — port of g-helper-linux FnLockRemapper/FnLockKeymap.
 # Widget state file (written by fnlock-ctl):
-#   off = FN-lock on  → F1–F12 passthrough
-#   on  = FN-lock off → remap F-keys to media targets
+#   on  = FN-lock on  → remap F-keys to media targets
+#   off = FN-lock off → F1–F12 passthrough (default)
 
 import os
 import select

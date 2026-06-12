@@ -13,12 +13,10 @@ SLEEP_ANIM="BannerSwipe"
 SHUTDOWN_ANIM="GlitchOut"
 
 on_ac() {
-    local ps online
-    for ps in /sys/class/power_supply/ADP*/online \
-              /sys/class/power_supply/AC*/online; do
-        [ -f "$ps" ] || continue
-        online=$(cat "$ps" 2>/dev/null) || continue
-        [ "$online" = "1" ] && return 0
+    local ps
+    for ps in /sys/class/power_supply/*; do
+        [ "$(cat "$ps/type" 2>/dev/null)" = "Mains" ] || continue
+        [ "$(cat "$ps/online" 2>/dev/null)" = "1" ] && return 0
     done
     return 1
 }
@@ -41,7 +39,9 @@ apply_shape() {
 # so it is safe to run repeatedly (timer/watcher) without restarting anims.
 sync_display() {
     local pref desired current shape
-    pref=$(cat "$POWER_FILE" 2>/dev/null || echo on)
+    # Default to off when no preference has been saved yet.
+    pref=$(cat "$POWER_FILE" 2>/dev/null)
+    [ "$pref" = "on" ] || pref="off"
 
     desired=true
     if [ "$pref" = "off" ]; then
@@ -64,7 +64,17 @@ sync_display() {
 case "$1" in
     on)
         echo on > "$POWER_FILE"
-        sync_display
+        # Force-apply rather than relying on the idempotent sync: asusd's
+        # config may already claim the display is enabled while the panel
+        # is actually dark (e.g. right after install).
+        if anime_bool off_when_unplugged && ! on_ac; then
+            asusctl anime --enable-display false
+        else
+            asusctl anime --enable-display true
+            shape=$(cat "$SHAPE_FILE" 2>/dev/null)
+            [ "$shape" = "logo" ] || shape="banner"
+            apply_shape "$shape"
+        fi
         ;;
     off)
         echo off > "$POWER_FILE"
@@ -89,7 +99,8 @@ case "$1" in
     status)
         shape=$(cat "$SHAPE_FILE" 2>/dev/null)
         [ "$shape" = "logo" ] || shape="banner"
-        pref=$(cat "$POWER_FILE" 2>/dev/null || echo on)
+        pref=$(cat "$POWER_FILE" 2>/dev/null)
+        [ "$pref" = "on" ] || pref="off"
         if anime_bool off_when_unplugged; then
             battery="yes"
         else

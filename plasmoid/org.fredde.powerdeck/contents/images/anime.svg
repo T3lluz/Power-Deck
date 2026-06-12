@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <circle cx="5" cy="5" r="1.6" fill="#c084fc"/>
-  <circle cx="12" cy="5" r="1.6" fill="#c084fc" fill-opacity="0.85"/>
-  <circle cx="19" cy="5" r="1.6" fill="#c084fc" fill-opacity="0.45"/>
-  <circle cx="5" cy="12" r="1.6" fill="#c084fc" fill-opacity="0.85"/>
-  <circle cx="12" cy="12" r="1.6" fill="#c084fc"/>
-  <circle cx="19" cy="12" r="1.6" fill="#c084fc" fill-opacity="0.85"/>
-  <circle cx="5" cy="19" r="1.6" fill="#c084fc" fill-opacity="0.45"/>
-  <circle cx="12" cy="19" r="1.6" fill="#c084fc" fill-opacity="0.85"/>
-  <circle cx="19" cy="19" r="1.6" fill="#c084fc"/>
+  <circle cx="5" cy="5" r="1.7" fill="#ff3247"/>
+  <circle cx="12" cy="5" r="1.7" fill="#ff3247" fill-opacity="0.8"/>
+  <circle cx="19" cy="5" r="1.7" fill="#ff3247" fill-opacity="0.4"/>
+  <circle cx="5" cy="12" r="1.7" fill="#ff3247" fill-opacity="0.8"/>
+  <circle cx="12" cy="12" r="1.7" fill="#ff3247"/>
+  <circle cx="19" cy="12" r="1.7" fill="#ff3247" fill-opacity="0.8"/>
+  <circle cx="5" cy="19" r="1.7" fill="#ff3247" fill-opacity="0.4"/>
+  <circle cx="12" cy="19" r="1.7" fill="#ff3247" fill-opacity="0.8"/>
+  <circle cx="19" cy="19" r="1.7" fill="#ff3247"/>
 </svg>

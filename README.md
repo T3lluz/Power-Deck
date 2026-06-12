@@ -95,20 +95,9 @@ Power-Deck/
 └── install.sh                       # User-space installer
 ```
 
-### Machine-specific settings
+### Refresh-rate handling
 
-`scripts/ghelper-profile` contains panel refresh-rate modes for a 2560×1600@165 Hz internal display. Edit these lines if your panel differs:
-
-```bash
-PANEL_MODE_HZ_HIGH="2560x1600@165"
-PANEL_MODE_HZ_LOW="2560x1600@60"
-```
-
-List available modes with:
-
-```bash
-kscreen-doctor -o
-```
+Nothing is hardcoded to a specific panel. `refresh-ctl` detects the internal display (`eDP*`) and its modes at runtime, and the widget offers three buttons (like G-Helper): **Auto**, **60 Hz**, and the panel's **highest rate**, shown as the detected number (e.g. "165 Hz"). If the panel has no 60 Hz mode the lowest available rate is used instead. Auto picks 60 Hz on battery or in the Extreme profile and the highest rate otherwise; the explicit 60 Hz / max buttons always win regardless of profile or power source.
 
 ## Usage
 
@@ -123,6 +112,7 @@ ghelper-profile extreme|power|balanced|performance|status
 anime-ctl on|off|banner|logo|battery-off on|off|status
 kbd-idle-ctl on|off|timeout 60|keep-ac on|off|brightness 0-3|status
 fnlock-ctl on|off|status
+refresh-ctl auto|low|high|sync|status
 ```
 
 ## Uninstall

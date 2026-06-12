@@ -1,13 +1,17 @@
 #!/bin/bash
-# anime-power-watch - keep the AniMe Matrix in sync with AC plug/unplug.
-# Run by anime-power-sync.service. Listens for power_supply udev events and
-# re-syncs the display; falls back to polling if udevadm is unavailable.
+# anime-power-watch - keep AC-dependent settings in sync with plug/unplug:
+# the AniMe Matrix display and the panel refresh rate (refresh-ctl auto).
+# Run by anime-power-sync.service. Listens for power_supply udev events;
+# falls back to polling if udevadm is unavailable.
 
 ANIME_CTL="$HOME/.local/bin/anime-ctl"
 [ -x "$ANIME_CTL" ] || ANIME_CTL="$(dirname "$0")/anime-ctl"
+REFRESH_CTL="$HOME/.local/bin/refresh-ctl"
+[ -x "$REFRESH_CTL" ] || REFRESH_CTL="$(dirname "$0")/refresh-ctl"
 
 sync() {
     "$ANIME_CTL" sync >/dev/null 2>&1
+    "$REFRESH_CTL" sync >/dev/null 2>&1
 }
 
 # Initial sync so state is correct at login.
@@ -26,7 +30,9 @@ fi
 # Fallback: poll the AC adapter state.
 prev=""
 while :; do
-    cur=$(cat /sys/class/power_supply/ADP*/online 2>/dev/null | head -1)
+    cur=$(for ps in /sys/class/power_supply/*; do
+        [ "$(cat "$ps/type" 2>/dev/null)" = "Mains" ] && cat "$ps/online" 2>/dev/null
+    done | head -1)
     if [ "$cur" != "$prev" ]; then
         prev="$cur"
         sync

@@ -6,11 +6,19 @@ CONF="$HOME/.config/kbd-idle.conf"
 FLAG="${XDG_RUNTIME_DIR:-/tmp}/kbd-idle-off.flag"
 DEV="asus::kbd_backlight"
 
+on_ac() {
+    local ps
+    for ps in /sys/class/power_supply/*; do
+        [ "$(cat "$ps/type" 2>/dev/null)" = "Mains" ] || continue
+        [ "$(cat "$ps/online" 2>/dev/null)" = "1" ] && return 0
+    done
+    return 1
+}
+
 case "$1" in
     off)
         # optionally never turn off while on AC power
-        if [ "${KEEP_ON_AC:-0}" = "1" ] && \
-           [ "$(cat /sys/class/power_supply/ADP0/online 2>/dev/null)" = "1" ]; then
+        if [ "${KEEP_ON_AC:-0}" = "1" ] && on_ac; then
             exit 0
         fi
         brightnessctl -sd "$DEV" set 0 >/dev/null 2>&1 && touch "$FLAG"

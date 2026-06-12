@@ -1,6 +1,9 @@
 #!/bin/bash
 # fnlock-ctl - Fn lock control for the Plasma profile widget
 # Uses g-helper-linux-style software remapping (evdev grab + uinput).
+# State file semantics (shared with fnlock-daemon.py):
+#   on  = FN-lock on  -> F1-F12 act as media keys (remap active)
+#   off = FN-lock off -> F1-F12 passthrough (default)
 # Usage: fnlock-ctl [on|off|status|restore]
 
 STATE_FILE="$HOME/.local/state/fnlock"
@@ -22,24 +25,21 @@ reload_daemon() {
 }
 
 case "$1" in
-    on)
-        echo off > "$STATE_FILE"
-        ensure_service
-        reload_daemon
-        ;;
-    off)
-        echo on > "$STATE_FILE"
+    on|off)
+        echo "$1" > "$STATE_FILE"
         ensure_service
         reload_daemon
         ;;
     restore)
-        [ -f "$STATE_FILE" ] || echo on > "$STATE_FILE"
+        # Default to FN-lock off if no saved state exists.
+        s=$(cat "$STATE_FILE" 2>/dev/null)
+        [ "$s" = "on" ] || [ "$s" = "off" ] || echo off > "$STATE_FILE"
         ensure_service
         reload_daemon
         ;;
     status)
         s=$(cat "$STATE_FILE" 2>/dev/null)
-        if [ "$s" = "off" ]; then
+        if [ "$s" = "on" ]; then
             echo on
         else
             echo off

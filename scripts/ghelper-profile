@@ -2,7 +2,7 @@
 # ghelper-profile - Switch power profiles (used by the Plasma profile widget)
 # Usage: ghelper-profile [extreme|power|balanced|performance|status]
 #
-# extreme     power-saver profile + boost off, panel dimming (ABM), 60Hz,
+# extreme     power-saver profile + low panel refresh rate,
 #             wifi powersave, PCIe ASPM powersave
 # power       power-saver profile, normal extras
 # balanced    balanced profile, normal extras
@@ -11,40 +11,35 @@
 STATE_DIR="$HOME/.local/state"
 STATE_FILE="$STATE_DIR/ghelper-profile-mode"
 HELPER="/usr/local/bin/power-mode"
-PANEL_MODE_HZ_HIGH="2560x1600@165"
-PANEL_MODE_HZ_LOW="2560x1600@60"
+REFRESH_CTL="$HOME/.local/bin/refresh-ctl"
+[ -x "$REFRESH_CTL" ] || REFRESH_CTL="$(dirname "$0")/refresh-ctl"
 
 mkdir -p "$STATE_DIR"
 
-set_refresh() {
-    kscreen-doctor "output.eDP-1.mode.$1" >/dev/null 2>&1
-}
-
 set_profile() {
     local mode="$1"
+    # Save first: refresh-ctl reads this file to make "auto" profile-aware
+    # (extreme -> low rate without clobbering the user's saved refresh mode).
+    echo "$mode" > "$STATE_FILE"
     case "$mode" in
         extreme)
             powerprofilesctl set power-saver
             sudo -n "$HELPER" extreme
-            set_refresh "$PANEL_MODE_HZ_LOW"
             ;;
         power)
             powerprofilesctl set power-saver
             sudo -n "$HELPER" normal
-            set_refresh "$PANEL_MODE_HZ_HIGH"
             ;;
         balanced)
             powerprofilesctl set balanced
             sudo -n "$HELPER" normal
-            set_refresh "$PANEL_MODE_HZ_HIGH"
             ;;
         performance)
             powerprofilesctl set performance
             sudo -n "$HELPER" normal
-            set_refresh "$PANEL_MODE_HZ_HIGH"
             ;;
     esac
-    echo "$mode" > "$STATE_FILE"
+    "$REFRESH_CTL" sync >/dev/null 2>&1
     echo "Profile set to: $mode"
 }
 
