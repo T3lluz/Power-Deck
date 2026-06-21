@@ -8,7 +8,7 @@ Item {
     id: root
 
     property bool checked: false
-    property color accent: Theme.red
+    property color accent: Theme.accent
 
     signal toggled(bool checked)
 
@@ -39,7 +39,7 @@ Item {
             : Theme.alpha(Kirigami.Theme.textColor, 0.12)
         border.width: 1
         border.color: root.checked
-            ? Theme.alpha(Theme.redBright, 0.9)
+            ? Theme.alpha(Theme.accentBright, 0.9)
             : Theme.alpha(Kirigami.Theme.textColor, 0.22)
         Behavior on color {
             ColorAnimation { duration: Theme.durMed; easing.type: Theme.easeOut }

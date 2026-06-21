@@ -13,8 +13,12 @@
       <default>true</default>
     </entry>
     <entry name="monochrome" type="Bool">
-      <label>Use a neutral grayscale palette instead of the ROG colors</label>
+      <label>Use a neutral grayscale palette instead of the colored theme</label>
       <default>false</default>
+    </entry>
+    <entry name="monoAccent" type="Int">
+      <label>Monochrome accent: 0=White, 1=Green, 2=Teal, 3=Orange, 4=Red, 5=Blue, 6=Purple</label>
+      <default>0</default>
     </entry>
   </group>
 </kcfg>

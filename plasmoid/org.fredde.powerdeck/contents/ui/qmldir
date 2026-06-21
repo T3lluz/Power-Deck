@@ -1,6 +1,8 @@
 singleton Theme 1.0 Theme.qml
 AnimeChip 1.0 AnimeChip.qml
+AnimeGlyph 1.0 AnimeGlyph.qml
 ProfileCard 1.0 ProfileCard.qml
+ProfileGlyph 1.0 ProfileGlyph.qml
 ProfileIconBadge 1.0 ProfileIconBadge.qml
 ProfileBurst 1.0 ProfileBurst.qml
 RogSwitch 1.0 RogSwitch.qml

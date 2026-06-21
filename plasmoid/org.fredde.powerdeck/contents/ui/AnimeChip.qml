@@ -10,7 +10,7 @@ Item {
     property string label: ""
     property bool isActive: false
     property bool chipEnabled: true
-    property color accentColor: Theme.red
+    property color accentColor: Theme.accent
     // soft breathing glow, used for "pending until reboot" states
     property bool pulsing: false
 

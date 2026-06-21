@@ -3,15 +3,15 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.components as PC3
 
-// Power profile card: icon + name + short description, with a slanted ROG
-// accent bar and glow when active, and a press "squeeze" animation.
+// Power profile card: animated vector glyph + name + short description, with
+// an accent glow when active and a press "squeeze" animation.
 Item {
     id: root
 
     property string profileName: ""
     property string profileDesc: ""
-    property url iconSource
-    property color accentColor: Theme.red
+    property string profileKind: "balanced"
+    property color accentColor: Theme.accent
     property bool isActive: false
     property string burstEffect: "pulse"
 
@@ -20,7 +20,7 @@ Item {
     onIsActiveChanged: {
         if (isActive) {
             burst.play()
-            iconPop.restart()
+            badge.play()
         }
     }
 
@@ -68,27 +68,15 @@ Item {
         anchors.rightMargin: Kirigami.Units.smallSpacing
         spacing: Kirigami.Units.smallSpacing * 1.25
 
-        ProfileIconBadge {
+        ProfileGlyph {
             id: badge
-            iconSource: root.iconSource
-            accentColor: root.accentColor
-            badgeSize: Math.round(Kirigami.Units.gridUnit * 1.5)
+            kind: root.profileKind
+            glyphColor: root.accentColor
+            glyphSize: Math.round(Kirigami.Units.gridUnit * 1.7)
             active: root.isActive
-
-            // little "pop" when this profile becomes active
-            SequentialAnimation {
-                id: iconPop
-                NumberAnimation {
-                    target: badge; property: "scale"
-                    from: 1.0; to: 1.28; duration: Theme.durFast
-                    easing.type: Easing.OutQuad
-                }
-                NumberAnimation {
-                    target: badge; property: "scale"
-                    to: 1.0; duration: Theme.durMed
-                    easing.type: Theme.easeBack; easing.overshoot: 2.5
-                }
-            }
+            Layout.preferredWidth: glyphSize
+            Layout.preferredHeight: glyphSize
+            Layout.alignment: Qt.AlignVCenter
         }
 
         ColumnLayout {

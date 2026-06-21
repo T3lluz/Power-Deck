@@ -211,6 +211,12 @@ PlasmoidItem {
         }
     })
 
+    // Coerce an unknown/loading profile to a valid glyph kind so the vector
+    // icon always has something to draw.
+    function glyphKind(profile) {
+        return profiles.indexOf(profile) !== -1 ? profile : "balanced"
+    }
+
     function dataFor(profile) {
         return profileData[profile] || {
             label: i18n("…"),
@@ -247,7 +253,9 @@ PlasmoidItem {
             + " -i preferences-system-power-management -t 3500 '" + s + "' '" + b + "'")
     }
 
-    Plasmoid.icon: "preferences-system-power-management"
+    // Widget icon follows the active profile, using the same per-profile
+    // glyph SVGs as the panel (system tray, widget list, tooltip, alt-tab).
+    Plasmoid.icon: dataFor(currentProfile).icon
     Plasmoid.status: PlasmaCore.Types.PassiveStatus
 
     toolTipMainText: i18n("Power Deck — %1", dataFor(currentProfile).name)
@@ -602,7 +610,8 @@ PlasmoidItem {
     }
 
     compactRepresentation: Item {
-        implicitWidth: compactRow.implicitWidth + Kirigami.Units.largeSpacing * 3
+        id: compactRoot
+        implicitWidth: compactRow.implicitWidth + Kirigami.Units.largeSpacing * 2
         implicitHeight: Kirigami.Units.gridUnit * 1.75
         Layout.minimumWidth: implicitWidth
         Layout.preferredWidth: implicitWidth
@@ -628,10 +637,19 @@ PlasmoidItem {
                 readonly property bool showBattery: (mode === 2 || mode === 3)
                     && root.batteryPercent >= 0
 
-                ProfileIconBadge {
-                    iconSource: dataFor(currentProfile).icon
-                    accentColor: dataFor(currentProfile).accent
-                    badgeSize: Kirigami.Units.iconSizes.smallMedium
+                // Native vector glyph painted directly in the profile accent,
+                // so the panel icon stays crisp and follows the active theme
+                // (full color normally, grayscale in monochrome) instead of
+                // being flattened to a single panel tint.
+                ProfileGlyph {
+                    readonly property int iconSize: Math.round(
+                        Math.min(compactRoot.height, Kirigami.Units.gridUnit * 2) * 0.92)
+                    Layout.preferredWidth: iconSize
+                    Layout.preferredHeight: iconSize
+                    Layout.alignment: Qt.AlignVCenter
+                    kind: glyphKind(currentProfile)
+                    glyphColor: dataFor(currentProfile).accent
+                    glyphSize: iconSize
                     active: true
                 }
 
@@ -681,11 +699,16 @@ PlasmoidItem {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing * 1.5
 
-                ProfileIconBadge {
-                    iconSource: dataFor(currentProfile).icon
-                    accentColor: dataFor(currentProfile).accent
-                    badgeSize: Math.round(Kirigami.Units.gridUnit * 2.1)
+                ProfileGlyph {
+                    id: headerBadge
+                    kind: glyphKind(currentProfile)
+                    glyphColor: dataFor(currentProfile).accent
+                    glyphSize: Math.round(Kirigami.Units.gridUnit * 2.1)
                     active: true
+                    Layout.preferredWidth: glyphSize
+                    Layout.preferredHeight: glyphSize
+                    Layout.alignment: Qt.AlignVCenter
+                    onKindChanged: play()
                 }
 
                 ColumnLayout {
@@ -695,7 +718,7 @@ PlasmoidItem {
                     PC3.Label {
                         Layout.fillWidth: true
                         text: i18n("POWER DECK")
-                        color: Theme.alpha(Theme.red, 0.9)
+                        color: Theme.muted
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
                         font.weight: Font.DemiBold
                         font.letterSpacing: 2.2
@@ -750,15 +773,15 @@ PlasmoidItem {
                     Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
                     Layout.preferredWidth: hzLabel.implicitWidth + Kirigami.Units.largeSpacing * 2
                     radius: height / 2
-                    color: Theme.alpha(Theme.red, 0.12)
+                    color: Theme.alpha(Theme.accent, 0.12)
                     border.width: 1
-                    border.color: Theme.alpha(Theme.red, 0.35)
+                    border.color: Theme.alpha(Theme.accent, 0.35)
 
                     PC3.Label {
                         id: hzLabel
                         anchors.centerIn: parent
                         text: i18n("%1 Hz", root.refreshCurrentHz)
-                        color: Theme.redBright
+                        color: Theme.accentBright
                         font.weight: Font.DemiBold
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                     }
@@ -835,7 +858,7 @@ PlasmoidItem {
                         required property string modelData
                         profileName: dataFor(modelData).name
                         profileDesc: dataFor(modelData).desc
-                        iconSource: dataFor(modelData).icon
+                        profileKind: root.glyphKind(modelData)
                         accentColor: dataFor(modelData).accent
                         burstEffect: dataFor(modelData).burst || "pulse"
                         isActive: currentProfile === modelData
@@ -851,6 +874,7 @@ PlasmoidItem {
                 SectionHeader {
                     title: i18n("GRAPHICS")
                     iconSource: Qt.resolvedUrl("../images/gpu.svg")
+                    glyphColor: Theme.iconGraphics
                     active: true
 
                     PC3.Label {
@@ -907,8 +931,8 @@ PlasmoidItem {
                             readonly property bool isPending: root.gfxPendingMode !== "none"
                                 && root.gfxPendingMode === modelData
                             label: root.gfxLabel(modelData)
-                            // red = active now, pulsing amber = after reboot
-                            accentColor: isPending ? Theme.amber : Theme.red
+                            // accent = active now, pulsing amber = after reboot
+                            accentColor: isPending ? Theme.amber : Theme.accent
                             pulsing: isPending
                             isActive: isPending || root.gfxMode === modelData
                             onClicked: {
@@ -962,7 +986,9 @@ PlasmoidItem {
             SectionCard {
                 SectionHeader {
                     title: i18n("ANIME MATRIX")
-                    iconSource: Qt.resolvedUrl("../images/anime.svg")
+                    animeGlyph: true
+                    animeAnimate: root.animeOn
+                    glyphColor: Theme.iconAnime
                     active: root.animeDisplayOn
 
                     RogSwitch {
@@ -1019,6 +1045,7 @@ PlasmoidItem {
                 SectionHeader {
                     title: i18n("KEYBOARD BACKLIGHT")
                     iconSource: Qt.resolvedUrl("../images/kbd.svg")
+                    glyphColor: Theme.iconKbd
                     active: true
                 }
 
@@ -1036,6 +1063,8 @@ PlasmoidItem {
                     PC3.Slider {
                         id: kbdBriSlider
                         Layout.fillWidth: true
+                        Kirigami.Theme.inherit: false
+                        Kirigami.Theme.highlightColor: Theme.accent
                         from: 0
                         to: 3
                         stepSize: 1
@@ -1128,9 +1157,11 @@ PlasmoidItem {
 
                     ProfileIconBadge {
                         iconSource: Qt.resolvedUrl("../images/fn.svg")
-                        accentColor: Theme.red
-                        badgeSize: Math.round(Kirigami.Units.gridUnit * 1.2)
+                        accentColor: Theme.accent
+                        glyphColor: root.fnLockOn ? Theme.iconFn : Theme.iconHeader
+                        badgeSize: Math.round(Kirigami.Units.gridUnit * 1.45)
                         active: root.fnLockOn
+                        bare: true
                     }
 
                     PC3.Label {
@@ -1153,11 +1184,12 @@ PlasmoidItem {
                 SectionHeader {
                     title: i18n("REFRESH RATE")
                     iconSource: Qt.resolvedUrl("../images/hz.svg")
+                    glyphColor: Theme.iconRefresh
                     active: true
 
                     PC3.Label {
                         text: i18n("%1 Hz", root.refreshCurrentHz)
-                        color: Theme.redBright
+                        color: Theme.accentBright
                         font.weight: Font.DemiBold
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                     }
@@ -1194,13 +1226,14 @@ PlasmoidItem {
                 SectionHeader {
                     title: i18n("CHARGE LIMIT")
                     iconSource: Qt.resolvedUrl("../images/battery.svg")
+                    glyphColor: Theme.iconCharge
                     active: true
 
                     PC3.Label {
                         text: root.chargeLimit >= 100
                             ? i18n("Full")
                             : i18n("%1%", root.chargeLimit)
-                        color: root.chargeLimit >= 100 ? Theme.redBright : Theme.green
+                        color: root.chargeLimit >= 100 ? Theme.accentBright : Theme.green
                         font.weight: Font.DemiBold
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                     }
@@ -1218,6 +1251,8 @@ PlasmoidItem {
 
                     PC3.Slider {
                         Layout.fillWidth: true
+                        Kirigami.Theme.inherit: false
+                        Kirigami.Theme.highlightColor: Theme.accent
                         from: 80
                         to: 100
                         stepSize: 5
@@ -1277,7 +1312,7 @@ PlasmoidItem {
                 radius: Kirigami.Units.smallSpacing * 2
                 color: Kirigami.Theme.backgroundColor
                 border.width: 1
-                border.color: Theme.alpha(Theme.red, 0.4)
+                border.color: Theme.alpha(Theme.accent, 0.4)
 
                 ColumnLayout {
                     id: confirmColumn
@@ -1288,7 +1323,7 @@ PlasmoidItem {
                     PC3.Label {
                         Layout.fillWidth: true
                         text: i18n("SWITCH GPU MODE")
-                        color: Theme.alpha(Theme.red, 0.9)
+                        color: Theme.muted
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
                         font.weight: Font.DemiBold
                         font.letterSpacing: 2.2
@@ -1354,6 +1389,12 @@ PlasmoidItem {
         target: Theme
         property: "monochrome"
         value: Plasmoid.configuration.monochrome
+    }
+
+    Binding {
+        target: Theme
+        property: "accentChoice"
+        value: Plasmoid.configuration.monoAccent
     }
 
     Component.onCompleted: {

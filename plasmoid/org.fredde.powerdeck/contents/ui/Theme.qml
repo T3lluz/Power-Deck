@@ -1,41 +1,80 @@
 pragma Singleton
 import QtQuick
 
-// Power Deck ROG theme: one place for the palette and the animation
+// Power Deck theme: one place for the palette and the animation
 // timings used by every component, so the whole panel moves and looks
 // consistent.
 QtObject {
     // ---- theme mode ----
-    // Toggled from the widget config. When true the colored ROG accents
-    // are replaced by a neutral grayscale palette (still distinct shades
-    // so the different modes/states stay readable).
+    // Toggled from the widget config. When true the colorful palette is
+    // replaced by a clean grayscale UI lit by a single user-chosen accent
+    // (or pure white for a fully neutral monochrome look).
     property bool monochrome: false
 
-    // ---- ROG palette ----
-    readonly property color rogRed: "#ff3247"        // ROG signature accent
-    readonly property color rogRedBright: "#ff5c6c"
-    readonly property color rogTeal: "#2dd4bf"       // Extreme Saver
-    readonly property color rogGreen: "#34d399"      // Power Saver
-    readonly property color rogBlue: "#38bdf8"       // Balanced
-    readonly property color rogAmber: "#fbbf24"      // Performance
+    // Index into monoAccents below, bound from the widget config. Only
+    // meaningful while monochrome is on.
+    property int accentChoice: 0
 
-    // ---- monochrome palette ----
-    // Distinct gray levels so the four profiles and accents remain
-    // distinguishable without any hue.
-    readonly property color monoRed: "#e5e7eb"
-    readonly property color monoRedBright: "#ffffff"
-    readonly property color monoTeal: "#6b7280"
-    readonly property color monoGreen: "#9ca3af"
-    readonly property color monoBlue: "#cbd0d8"
-    readonly property color monoAmber: "#f3f4f6"
+    // ---- base palette ----
+    // A calm, modern primary accent (soft indigo) used for interactive
+    // "on/active" states instead of a loud gaming red. Red is reserved
+    // for genuine danger/critical states only.
+    readonly property color hueAccent: "#7d93f0"     // primary interactive
+    readonly property color hueAccentBright: "#9aacf5"
+    readonly property color hueRed: "#f25563"        // danger / critical only
+    readonly property color hueRedBright: "#ff6b78"
+    readonly property color hueTeal: "#2dd4bf"       // Extreme Saver
+    readonly property color hueGreen: "#34d399"      // Power Saver
+    readonly property color hueBlue: "#56b6f0"       // Balanced
+    readonly property color hueAmber: "#f4b73d"      // Performance
+
+    // ---- monochrome accent options ----
+    // The single hue that lights up the otherwise grayscale UI. The first
+    // entry is a near-white so "White" gives a fully neutral monochrome.
+    readonly property var monoAccents: [
+        { name: "White",  base: "#e6e9ef", bright: "#ffffff" },
+        { name: "Green",  base: "#34d399", bright: "#5fe6b5" },
+        { name: "Teal",   base: "#2dd4bf", bright: "#5fe6d6" },
+        { name: "Orange", base: "#fb923c", bright: "#fdb877" },
+        { name: "Red",    base: "#f2596a", bright: "#ff7180" },
+        { name: "Blue",   base: "#56b6f0", bright: "#85ccf6" },
+        { name: "Purple", base: "#a78bfa", bright: "#c1acfc" }
+    ]
+    readonly property int monoIndex: Math.max(0, Math.min(accentChoice, monoAccents.length - 1))
+    readonly property color monoSel: monoAccents[monoIndex].base
+    readonly property color monoSelBright: monoAccents[monoIndex].bright
+
+    // ---- neutral grayscale chrome (monochrome theme) ----
+    // Crisp, higher-contrast tones so the panel never looks washed out.
+    readonly property color monoText: "#e9ecf2"
+    readonly property color monoNeutral: "#aeb4be"
 
     // ---- active palette ----
-    readonly property color red: monochrome ? monoRed : rogRed
-    readonly property color redBright: monochrome ? monoRedBright : rogRedBright
-    readonly property color teal: monochrome ? monoTeal : rogTeal
-    readonly property color green: monochrome ? monoGreen : rogGreen
-    readonly property color blue: monochrome ? monoBlue : rogBlue
-    readonly property color amber: monochrome ? monoAmber : rogAmber
+    // In monochrome, every formerly-colored role collapses onto the single
+    // selected accent, so the panel reads as grayscale + one hue. Genuine
+    // neutrals (muted text, inactive icons) stay gray below.
+    readonly property color accent: monochrome ? monoSel : hueAccent
+    readonly property color accentBright: monochrome ? monoSelBright : hueAccentBright
+    readonly property color red: monochrome ? monoSel : hueRed
+    readonly property color redBright: monochrome ? monoSelBright : hueRedBright
+    readonly property color teal: monochrome ? monoSel : hueTeal
+    readonly property color green: monochrome ? monoSel : hueGreen
+    readonly property color blue: monochrome ? monoSel : hueBlue
+    readonly property color amber: monochrome ? monoSel : hueAmber
+
+    // Neutral wordmark / faint label tone — quiet, never a loud accent.
+    readonly property color muted: monochrome ? monoNeutral : "#9aa7bd"
+
+    // Section-header glyphs: a calm, cool tone for inactive headers; the
+    // active per-section glyphs take a fitting hue normally and the chosen
+    // accent in monochrome.
+    readonly property color iconHeader: monochrome ? monoNeutral : "#8da4c0"
+    readonly property color iconGraphics: monochrome ? monoSel : "#a78bfa"  // violet
+    readonly property color iconAnime: monochrome ? monoSel : "#f472b6"     // pink
+    readonly property color iconKbd: monochrome ? monoSel : "#60a5fa"       // blue
+    readonly property color iconRefresh: monochrome ? monoSel : "#22d3ee"   // cyan
+    readonly property color iconCharge: monochrome ? monoSel : "#34d399"    // green
+    readonly property color iconFn: monochrome ? monoSel : "#f4b73d"        // amber
 
     // ---- animation ----
     readonly property int durFast: 140

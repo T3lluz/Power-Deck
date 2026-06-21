@@ -11,17 +11,39 @@ RowLayout {
     property string title: ""
     property url iconSource
     property bool active: true
+    // Per-section glyph tint — a fitting hue in the normal theme, neutral
+    // gray in monochrome (callers pass a Theme.icon* color).
+    property color glyphColor: Theme.iconHeader
+    // When true, swap the static icon for the live AniMe Matrix glyph whose
+    // dots blink on their own. `animeAnimate` pauses that idle motion.
+    property bool animeGlyph: false
+    property bool animeAnimate: true
     default property alias trailing: trailingRow.data
+
+    readonly property int badgeSize: Math.round(Kirigami.Units.gridUnit * 1.55)
 
     Layout.fillWidth: true
     spacing: Kirigami.Units.smallSpacing * 1.5
 
     ProfileIconBadge {
-        visible: root.iconSource.toString().length > 0
+        visible: !root.animeGlyph && root.iconSource.toString().length > 0
         iconSource: root.iconSource
-        accentColor: Theme.red
-        badgeSize: Math.round(Kirigami.Units.gridUnit * 1.35)
+        accentColor: Theme.accent
+        glyphColor: root.active ? root.glyphColor : Theme.iconHeader
+        badgeSize: root.badgeSize
         active: root.active
+        bare: true
+    }
+
+    AnimeGlyph {
+        visible: root.animeGlyph
+        glyphColor: root.active ? root.glyphColor : Theme.iconHeader
+        glyphSize: Math.round(root.badgeSize * 0.92)
+        active: root.active
+        animate: root.animeAnimate
+        Layout.preferredWidth: root.badgeSize
+        Layout.preferredHeight: root.badgeSize
+        Layout.alignment: Qt.AlignVCenter
     }
 
     PC3.Label {

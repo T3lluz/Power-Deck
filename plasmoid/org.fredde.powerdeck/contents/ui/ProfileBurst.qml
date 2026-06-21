@@ -9,7 +9,7 @@ import QtQuick
 Item {
     id: root
 
-    property color accent: Theme.red
+    property color accent: Theme.accent
     property string effect: "pulse"
 
     anchors.fill: parent
