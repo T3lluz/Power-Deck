@@ -12,5 +12,9 @@
       <label>Show notifications on profile and power changes</label>
       <default>true</default>
     </entry>
+    <entry name="monochrome" type="Bool">
+      <label>Use a neutral grayscale palette instead of the ROG colors</label>
+      <default>false</default>
+    </entry>
   </group>
 </kcfg>

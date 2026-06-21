@@ -27,6 +27,22 @@ nvidia_runtime_pm() {
     done
 }
 
+# Pin every NVIDIA PCI function in D0 by disabling runtime PM
+# (power/control = "on"). Used for the Performance profile in Hybrid mode
+# so the dGPU never drops to D3cold: it stays instantly available to any
+# app or game that wants to render on it, instead of paying the wake-up
+# latency (or being skipped entirely) on a runtime-suspended card. In
+# Integrated mode there is no NVIDIA device on the bus, so this is a
+# no-op and Performance behaves exactly like the other profiles.
+nvidia_dgpu_awake() {
+    local dev
+    for dev in /sys/bus/pci/devices/*; do
+        [ "$(cat "$dev/vendor" 2>/dev/null)" = "0x10de" ] || continue
+        [ -w "$dev/power/control" ] || continue
+        echo on > "$dev/power/control" 2>/dev/null
+    done
+}
+
 GFX_CONF=/etc/supergfxd.conf
 GFX_STATE_DIR=/var/lib/power-deck
 GFX_PENDING="$GFX_STATE_DIR/gfx-pending"
@@ -91,9 +107,21 @@ case "$1" in
         [ -n "$PANEL" ] && echo 0 > "$PANEL"
         echo default > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
         [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off
+        # Re-enable runtime suspend so the dGPU can idle to D3cold again
+        # after leaving Performance (which pins it awake).
+        nvidia_runtime_pm
+        ;;
+    performance)
+        # Same desktop extras as "normal", but keep the dGPU pinned awake
+        # so Hybrid + Performance actually drives apps/games on the dGPU
+        # instead of leaving it runtime-suspended.
+        [ -n "$PANEL" ] && echo 0 > "$PANEL"
+        echo default > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
+        [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off
+        nvidia_dgpu_awake
         ;;
     *)
-        echo "Usage: $0 extreme|normal|gfx-mode <Mode>|gfx-commit" >&2
+        echo "Usage: $0 extreme|normal|performance|gfx-mode <Mode>|gfx-commit" >&2
         exit 1
         ;;
 esac

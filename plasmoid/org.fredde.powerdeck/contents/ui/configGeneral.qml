@@ -8,6 +8,7 @@ KCM.SimpleKCM {
 
     property int cfg_compactMode
     property alias cfg_showNotifications: notifyCheck.checked
+    property alias cfg_monochrome: monoCheck.checked
 
     Kirigami.FormLayout {
         QQC2.ComboBox {
@@ -26,6 +27,12 @@ KCM.SimpleKCM {
             id: notifyCheck
             Kirigami.FormData.label: i18n("Notifications:")
             text: i18n("Notify on profile and power changes")
+        }
+
+        QQC2.CheckBox {
+            id: monoCheck
+            Kirigami.FormData.label: i18n("Theme:")
+            text: i18n("Monochrome (grayscale) palette")
         }
     }
 }

@@ -1348,6 +1348,14 @@ PlasmoidItem {
         }
     }
 
+    // Keep the shared Theme palette in sync with the widget config so the
+    // monochrome toggle applies live across every component.
+    Binding {
+        target: Theme
+        property: "monochrome"
+        value: Plasmoid.configuration.monochrome
+    }
+
     Component.onCompleted: {
         refreshProfile()
         refreshTimer.start()

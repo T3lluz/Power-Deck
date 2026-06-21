@@ -21,11 +21,34 @@ MODE_FILE="$STATE_DIR/refresh-mode"
 PROFILE_FILE="$STATE_DIR/ghelper-profile-mode"
 mkdir -p "$STATE_DIR"
 
+# True whenever the laptop is running on external power. Checks several
+# signals because a single one is unreliable right after a cold boot:
+#   1. a wall adapter (Mains) reporting online
+#   2. a USB-C / Thunderbolt PD source reporting online (the G14 and many
+#      modern laptops charge over USB-C, which shows up as a USB-type
+#      power supply, never as Mains)
+#   3. the battery status — "Charging"/"Full"/"Not charging" all mean
+#      external power is present; only "Discharging" means true battery.
+# The battery-status check is the backstop that fixes "auto stays at
+# 60 Hz while charging": at boot the Mains "online" flag can still read 0
+# for a moment, but the charger is clearly attached if the battery is
+# charging.
 on_ac() {
-    local ps
+    local ps type online status
     for ps in /sys/class/power_supply/*; do
-        [ "$(cat "$ps/type" 2>/dev/null)" = "Mains" ] || continue
-        [ "$(cat "$ps/online" 2>/dev/null)" = "1" ] && return 0
+        [ -e "$ps" ] || continue
+        type="$(cat "$ps/type" 2>/dev/null)"
+        online="$(cat "$ps/online" 2>/dev/null)"
+        case "$type" in
+            Mains|USB*) [ "$online" = "1" ] && return 0 ;;
+        esac
+    done
+    for ps in /sys/class/power_supply/*; do
+        [ "$(cat "$ps/type" 2>/dev/null)" = "Battery" ] || continue
+        status="$(cat "$ps/status" 2>/dev/null)"
+        case "$status" in
+            Charging|Full|"Not charging") return 0 ;;
+        esac
     done
     return 1
 }

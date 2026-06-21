@@ -13,3 +13,19 @@ case "$mode" in
 esac
 
 "$HOME/.local/bin/fnlock-ctl" restore
+
+# Refresh-rate backstop. At a cold boot the panel comes up at 60 Hz and
+# KDE's kscreen daemon restores its own remembered display config a few
+# seconds AFTER login — which can clobber the rate we just set (e.g.
+# leaving "auto" stuck at 60 Hz even while charging). The profile switch
+# above already synced once; re-sync a few more times to win that race
+# without blocking the rest of restore.
+REFRESH_CTL="$HOME/.local/bin/refresh-ctl"
+if [ -x "$REFRESH_CTL" ]; then
+    (
+        for delay in 4 6 8; do
+            sleep "$delay"
+            "$REFRESH_CTL" sync >/dev/null 2>&1
+        done
+    ) &
+fi

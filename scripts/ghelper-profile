@@ -16,6 +16,36 @@ REFRESH_CTL="$HOME/.local/bin/refresh-ctl"
 
 mkdir -p "$STATE_DIR"
 
+# The asusctl platform profile that power-profiles-daemon's "power-saver"
+# maps to (low-power). Extreme mode parks a near-silent fan curve here so
+# the fans stay off until the chassis is genuinely warm ("lap/bed" mode);
+# every other profile restores the firmware default curve.
+SILENT_PROFILE="LowPower"
+# 0% until ~72 C, then a gentle ramp — keeps things silent while the
+# power-saver profile already caps power (so temps stay low), and still
+# spins up before anything gets dangerous. Eight points to match the
+# firmware curve length asusctl expects.
+SILENT_CURVE="45c:0%,55c:0%,62c:0%,68c:0%,72c:15%,80c:30%,88c:55%,97c:90%"
+
+# asusctl talks to asusd over D-Bus (no root prompt). Fan-curve control is
+# best-effort: if the hardware/daemon does not support it, the profile
+# switch must still succeed, so failures are swallowed.
+have_asusctl() { command -v asusctl >/dev/null 2>&1; }
+
+silent_fans_on() {
+    have_asusctl || return 0
+    asusctl fan-curve --mod-profile "$SILENT_PROFILE" --fan cpu --data "$SILENT_CURVE" >/dev/null 2>&1
+    asusctl fan-curve --mod-profile "$SILENT_PROFILE" --fan gpu --data "$SILENT_CURVE" >/dev/null 2>&1
+    asusctl fan-curve --mod-profile "$SILENT_PROFILE" --enable-fan-curves true >/dev/null 2>&1
+}
+
+silent_fans_off() {
+    have_asusctl || return 0
+    # Hand the fans back to firmware control for the low-power profile so
+    # non-extreme modes are unaffected by the silent curve.
+    asusctl fan-curve --mod-profile "$SILENT_PROFILE" --enable-fan-curves false >/dev/null 2>&1
+}
+
 set_profile() {
     local mode="$1"
     # Save first: refresh-ctl reads this file to make "auto" profile-aware
@@ -25,18 +55,24 @@ set_profile() {
         extreme)
             powerprofilesctl set power-saver
             sudo -n "$HELPER" extreme
+            silent_fans_on
             ;;
         power)
             powerprofilesctl set power-saver
             sudo -n "$HELPER" normal
+            silent_fans_off
             ;;
         balanced)
             powerprofilesctl set balanced
             sudo -n "$HELPER" normal
+            silent_fans_off
             ;;
         performance)
             powerprofilesctl set performance
-            sudo -n "$HELPER" normal
+            # Pin the dGPU awake (Hybrid + Performance) so it actually
+            # drives apps/games instead of staying runtime-suspended.
+            sudo -n "$HELPER" performance
+            silent_fans_off
             ;;
     esac
     "$REFRESH_CTL" sync >/dev/null 2>&1

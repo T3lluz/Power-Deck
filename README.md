@@ -14,6 +14,7 @@ Power Deck brings GHelper-style laptop controls to KDE Plasma. Scroll the panel 
 - **GPU mode switching** — Integrated / Hybrid (queued for next boot), with a live tag showing which GPUs are actually active
 - **Notifications** — optional desktop notifications on profile switches, plug/unplug, and GPU mode changes
 - **Configurable panel display** — icon only, icon + profile, icon + battery %, or all three
+- **Monochrome theme** — optional neutral grayscale palette (toggle in the widget config) instead of the colored ROG accents
 - **AniMe Matrix** — toggle display, pick Banner or Logo, auto-off on battery
 - **Keyboard light timer** — idle timeout, brightness slider, keep-on-AC option
 - **FN-lock** — software remapping for media keys vs function keys
@@ -23,12 +24,12 @@ Power Deck brings GHelper-style laptop controls to KDE Plasma. Scroll the panel 
 
 | Mode | Profile | Extras |
 |------|---------|--------|
-| Extreme Saver | power-saver | CPU boost off, 60 Hz, Wi-Fi powersave, PCIe ASPM powersave, NVIDIA dGPU runtime suspend (D3cold) |
+| Extreme Saver | power-saver | CPU boost off, 60 Hz, Wi-Fi powersave, PCIe ASPM powersave, NVIDIA dGPU runtime suspend (D3cold), near-silent fan curve (fans off until ~72 °C) |
 | Power Saver | power-saver | CPU boost off, normal refresh and peripherals |
 
 CPU boost is managed by `power-profiles-daemon`: the `power-saver` profile (used by both saver modes) disables per-policy boost on amd_pstate automatically.
 | Balanced | balanced | Normal extras |
-| Performance | performance | Normal extras |
+| Performance | performance | Normal extras + dGPU pinned awake in Hybrid (D0, no runtime suspend) |
 
 ### Temperatures and power draw
 
@@ -45,6 +46,8 @@ When `supergfxd` is available, a Graphics section lets you switch between Integr
 Mode changes are staged in `/var/lib/power-deck/gfx-pending` (via the `power-mode` root helper) and committed into `/etc/supergfxd.conf` by `power-deck-gfx-apply.service` at shutdown — after supergfxd has stopped — so the daemon applies the new mode cleanly when it starts at the next boot. The widget deliberately never calls `supergfxctl -m`: even with `always_reboot` enabled, supergfxd reacts to it by attempting a live driver unload (`rmmod nvidia_drm`) that always fails while a desktop session is running, after which the daemon wedges on a PCI unbind in uninterruptible kernel state and the next reboot hangs on a black screen. Editing the config under a running daemon is equally unsafe (any daemon restart live-applies it), which is why the commit is deferred to shutdown.
 
 Unlike GHelper on Windows, Integrated ↔ Hybrid cannot switch live on Linux: supergfxd requires the session to end for these changes (verified even with PCI `hotplug_type` enabled), because the compositor holds the display stack. In practice you rarely need to switch, though — in Hybrid mode the NVIDIA dGPU runtime-suspends to D3cold (~0 W) whenever it is unused, so battery life matches Integrated until an app actually wakes the dGPU.
+
+The exception is the **Performance** profile: in Hybrid mode it pins the dGPU awake (`power/control = on`, kept in D0) so it never runtime-suspends. That keeps the card instantly available to apps and games — no wake-up latency, and offload-aware launchers always see a ready dGPU — at the cost of the idle dGPU draw. Switching to any other profile sets it back to `auto`, so it resumes suspending to D3cold when idle. In Integrated mode there is no dGPU on the bus, so Performance behaves like the other profiles. Note this keeps the dGPU *available*; per-app render offload still follows the usual PRIME mechanism (`prime-run` / `__NV_PRIME_RENDER_OFFLOAD`, or per-game launch options) for software that doesn't pick the dGPU on its own.
 
 ## Requirements
 
@@ -125,6 +128,8 @@ Power-Deck/
 ### Refresh-rate handling
 
 Nothing is hardcoded to a specific panel. `refresh-ctl` detects the internal display (`eDP*`) and its modes at runtime, and the widget offers three buttons (like G-Helper): **Auto**, **60 Hz**, and the panel's **highest rate**, shown as the detected number (e.g. "165 Hz"). If the panel has no 60 Hz mode the lowest available rate is used instead. Auto picks 60 Hz on battery or in the Extreme profile and the highest rate otherwise; the explicit 60 Hz / max buttons always win regardless of profile or power source.
+
+AC detection for Auto is deliberately robust so it doesn't get stuck at 60 Hz while charging: it treats the laptop as plugged in when a wall adapter (`Mains`) **or** a USB-C/PD source reports `online`, and also when the battery status is `Charging`/`Full`/`Not charging`. The battery-status signal is the backstop for cold boots, where the adapter's `online` flag can momentarily read 0 even though the charger is attached. On top of that, `ghelper-restore` re-syncs the rate a few times over the first several seconds of the session, because KDE's kscreen daemon restores its own remembered display config shortly after login and would otherwise clobber the rate back to 60 Hz.
 
 ## Usage
 
