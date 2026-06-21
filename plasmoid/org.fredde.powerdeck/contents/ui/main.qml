@@ -1225,7 +1225,7 @@ PlasmoidItem {
             SectionCard {
                 SectionHeader {
                     title: i18n("CHARGE LIMIT")
-                    iconSource: Qt.resolvedUrl("../images/battery.svg")
+                    iconSource: Qt.resolvedUrl("../images/charge.svg")
                     glyphColor: Theme.iconCharge
                     active: true
 
