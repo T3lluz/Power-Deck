@@ -35,12 +35,14 @@ if command -v udevadm >/dev/null 2>&1; then
     done
 fi
 
-# Fallback: poll the AC adapter state.
+# Fallback: poll the AC adapter state (wall adapter or USB-C PD).
 prev=""
 while :; do
     cur=$(for ps in /sys/class/power_supply/*; do
-        [ "$(cat "$ps/type" 2>/dev/null)" = "Mains" ] && cat "$ps/online" 2>/dev/null
-    done | head -1)
+        case "$(cat "$ps/type" 2>/dev/null)" in
+            Mains|USB*) cat "$ps/online" 2>/dev/null ;;
+        esac
+    done | sort -r | head -1)
     if [ "$cur" != "$prev" ]; then
         prev="$cur"
         sync_twice

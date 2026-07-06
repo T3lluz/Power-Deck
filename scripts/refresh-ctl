@@ -21,6 +21,27 @@ MODE_FILE="$STATE_DIR/refresh-mode"
 PROFILE_FILE="$STATE_DIR/ghelper-profile-mode"
 mkdir -p "$STATE_DIR"
 
+# kscreen-doctor is a session tool: without the session's WAYLAND_DISPLAY
+# (and friends) it aborts with SIGABRT. Callers like the udev power
+# watcher run from a systemd user service that starts before Plasma
+# exports those variables, which silently broke every AC plug/unplug
+# refresh sync. Import whatever is missing from the systemd user session.
+import_session_env() {
+    [ -n "${WAYLAND_DISPLAY:-}" ] && [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && return 0
+    local line var
+    while IFS= read -r line; do
+        case "$line" in
+            WAYLAND_DISPLAY=*|DISPLAY=*|DBUS_SESSION_BUS_ADDRESS=*|XDG_RUNTIME_DIR=*|XAUTHORITY=*)
+                var="${line%%=*}"
+                if [ -z "$(eval "printf %s \"\${$var:-}\"")" ]; then
+                    export "$line"
+                fi
+                ;;
+        esac
+    done < <(systemctl --user show-environment 2>/dev/null)
+}
+import_session_env
+
 # True whenever the laptop is running on external power. Checks several
 # signals because a single one is unreliable right after a cold boot:
 #   1. a wall adapter (Mains) reporting online
@@ -114,12 +135,27 @@ apply() {
     kscreen-doctor "output.${name}.mode.${target}" >/dev/null 2>&1
 }
 
+# True while the extreme profile is really driving the machine. The saved
+# profile file alone is not enough: PowerDevil auto-switches the PPD
+# profile on AC plug/unplug (e.g. extreme/power-saver -> balanced on AC)
+# without touching Power Deck's state, and the extreme 60 Hz cap must
+# lift with it — otherwise "auto" sits at 60 Hz on the charger until the
+# user manually clicks a profile. Without powerprofilesctl fall back to
+# trusting the saved profile.
+extreme_active() {
+    [ "$(cat "$PROFILE_FILE" 2>/dev/null)" = "extreme" ] || return 1
+    command -v powerprofilesctl >/dev/null 2>&1 || return 0
+    local ppd
+    ppd="$(powerprofilesctl get 2>/dev/null)"
+    [ -z "$ppd" ] || [ "$ppd" = "power-saver" ]
+}
+
 desired() {
     case "$(saved_mode)" in
         low)  echo low ;;
         high) echo high ;;
         auto)
-            if [ "$(cat "$PROFILE_FILE" 2>/dev/null)" = "extreme" ]; then
+            if extreme_active; then
                 echo low
             elif on_ac; then
                 echo high

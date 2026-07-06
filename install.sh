@@ -284,7 +284,9 @@ section "Enabling services"
 
 enable_service() {
     step "$1"
-    if run systemctl --user enable --now "$1"; then ok; else
+    # reenable (not enable) so stale WantedBy symlinks from older versions
+    # are dropped when a unit's [Install] section changes
+    if run systemctl --user reenable "$1" && run systemctl --user start "$1"; then ok; else
         warn "could not enable $1 (check: systemctl --user status $1)"
     fi
 }

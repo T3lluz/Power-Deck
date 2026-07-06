@@ -1,6 +1,10 @@
 [Unit]
-Description=Sync AniMe Matrix display with AC power state
+Description=Sync AniMe Matrix display and refresh rate with AC power state
+# Bind to the graphical session: starting earlier (default.target) means
+# WAYLAND_DISPLAY is not yet in the user environment and kscreen-doctor
+# aborts, silently breaking the AC plug/unplug refresh-rate sync.
 After=graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
 ExecStart=%h/.local/bin/anime-power-watch
@@ -8,4 +12,4 @@ Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

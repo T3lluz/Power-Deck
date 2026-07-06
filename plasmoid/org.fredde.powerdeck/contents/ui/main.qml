@@ -150,7 +150,13 @@ PlasmoidItem {
 
     function gfxPerformAction(action) {
         if (action === "reboot") {
-            execDataSource.connectSource("systemctl reboot")
+            // systemctl can be blocked by inhibitors or polkit in some
+            // sessions and then silently does nothing — fall back through
+            // loginctl and finally ignore blocking inhibitors
+            execDataSource.connectSource(
+                "systemctl reboot"
+                + " || loginctl reboot"
+                + " || systemctl reboot -i")
         } else {
             // KDE logout without confirmation; loginctl as a fallback
             execDataSource.connectSource(
@@ -475,6 +481,13 @@ PlasmoidItem {
                     // Ignore polled status while a switch is in flight,
                     // otherwise a stale poll reverts the user's choice.
                     if (!isSwitching) {
+                        // profile changed outside the widget (e.g. PowerDevil
+                        // auto-switching to Balanced on AC plug): re-sync the
+                        // AC/profile-dependent refresh rate right away instead
+                        // of waiting for the user to click a profile card
+                        if (currentProfile !== "unknown" && output !== currentProfile) {
+                            execDataSource.connectSource(root.refreshScriptPath + " sync")
+                        }
                         previousProfile = currentProfile
                         currentProfile = output
                     }

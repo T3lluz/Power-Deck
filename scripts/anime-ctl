@@ -15,8 +15,10 @@ SHUTDOWN_ANIM="GlitchOut"
 on_ac() {
     local ps
     for ps in /sys/class/power_supply/*; do
-        [ "$(cat "$ps/type" 2>/dev/null)" = "Mains" ] || continue
-        [ "$(cat "$ps/online" 2>/dev/null)" = "1" ] && return 0
+        case "$(cat "$ps/type" 2>/dev/null)" in
+            # USB-C / Thunderbolt PD chargers report as a USB-type supply
+            Mains|USB*) [ "$(cat "$ps/online" 2>/dev/null)" = "1" ] && return 0 ;;
+        esac
     done
     return 1
 }

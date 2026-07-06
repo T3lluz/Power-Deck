@@ -14,7 +14,8 @@ ac=0
 for ps in /sys/class/power_supply/*; do
     case "$(cat "$ps/type" 2>/dev/null)" in
         Battery) [ -n "$bat" ] || { [ -r "$ps/capacity" ] && bat="$ps"; } ;;
-        Mains)   [ "$(cat "$ps/online" 2>/dev/null)" = "1" ] && ac=1 ;;
+        # USB-C / Thunderbolt PD chargers report as a USB-type supply
+        Mains|USB*) [ "$(cat "$ps/online" 2>/dev/null)" = "1" ] && ac=1 ;;
     esac
 done
 

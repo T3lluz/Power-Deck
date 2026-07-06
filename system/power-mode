@@ -43,9 +43,78 @@ nvidia_dgpu_awake() {
     done
 }
 
-GFX_CONF=/etc/supergfxd.conf
-GFX_STATE_DIR=/var/lib/power-deck
+# Paths are overridable for the test suite (tests/run-tests.sh); real
+# invocations never set these variables.
+GFX_CONF="${POWER_DECK_GFX_CONF:-/etc/supergfxd.conf}"
+GFX_STATE_DIR="${POWER_DECK_GFX_STATE_DIR:-/var/lib/power-deck}"
 GFX_PENDING="$GFX_STATE_DIR/gfx-pending"
+MODPROBE_DIR="${POWER_DECK_MODPROBE_DIR:-/etc/modprobe.d}"
+MODLOAD_DIR="${POWER_DECK_MODLOAD_DIR:-/etc/modules-load.d}"
+MODLOAD_SRC_DIR="${POWER_DECK_MODLOAD_SRC_DIR:-/usr/lib/modules-load.d}"
+GUARD_MODPROBE="$MODPROBE_DIR/power-deck-integrated.conf"
+GUARD_MARKER="# Managed by Power Deck"
+
+conf_mode() {
+    sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([A-Za-z]*\)".*/\1/p' "$GFX_CONF" 2>/dev/null | head -n1
+}
+
+# Keep NVIDIA modules from being loaded before supergfxd when the
+# configured mode is Integrated. Root cause of the "switch to Integrated
+# then reboot hangs" bug: early boot loads nvidia/nvidia_drm (udev
+# autoload, modules-load.d, nvidia_drm.fbdev=1), supergfxd then cannot
+# rmmod them ("Module nvidia_modeset is in use"), its action thread
+# wedges in uninterruptible kernel state and the next shutdown hangs
+# after the final SIGKILL. With the modules never loaded (or unloaded
+# right before supergfxd starts) the Integrated switch is clean.
+# Everything here is reconciled on every boot, so a mode change made
+# behind Power Deck's back (e.g. supergfxctl directly) heals itself.
+nvidia_boot_guard() {
+    local mode f dst
+    mode="$(conf_mode)"
+    if [ "$mode" = "Integrated" ]; then
+        mkdir -p "$MODPROBE_DIR" "$MODLOAD_DIR"
+        {
+            echo "$GUARD_MARKER (power-mode gfx-commit) — removed automatically"
+            echo "# when the configured supergfxd mode is not Integrated. Stops udev"
+            echo "# from auto-loading NVIDIA modules before supergfxd can remove the"
+            echo "# dGPU: a loaded nvidia_drm makes supergfxd wedge and hangs shutdown."
+            echo "blacklist nvidia"
+            echo "blacklist nvidia_drm"
+            echo "blacklist nvidia_modeset"
+            echo "blacklist nvidia_uvm"
+        } > "$GUARD_MODPROBE"
+        # blacklist does not stop explicit loads from modules-load.d (e.g.
+        # nvidia-utils.conf inserting nvidia-uvm), so mask those lists with
+        # same-named empty overrides in /etc.
+        for f in "$MODLOAD_SRC_DIR"/*.conf; do
+            [ -f "$f" ] || continue
+            grep -q '^nvidia' "$f" 2>/dev/null || continue
+            dst="$MODLOAD_DIR/$(basename "$f")"
+            # never clobber a file the user created themselves
+            if [ -e "$dst" ] && ! grep -q "^$GUARD_MARKER" "$dst" 2>/dev/null; then
+                continue
+            fi
+            echo "$GUARD_MARKER — masks $(basename "$f") while GPU mode is Integrated" > "$dst"
+        done
+        # best effort for the current boot: unload anything already inserted
+        # (runs before supergfxd, nvidia-persistenced and the session start)
+        if [ -z "${POWER_DECK_TEST:-}" ]; then
+            modprobe -r nvidia_drm nvidia_modeset nvidia_uvm nvidia 2>/dev/null
+            if lsmod 2>/dev/null | grep -q '^nvidia'; then
+                echo "gfx-commit: warning: NVIDIA modules still loaded, supergfxd may fail to switch" >&2
+            else
+                echo "gfx-commit: NVIDIA module load guards active (Integrated)"
+            fi
+        fi
+    else
+        rm -f "$GUARD_MODPROBE"
+        for f in "$MODLOAD_DIR"/*.conf; do
+            [ -f "$f" ] || continue
+            grep -q "^$GUARD_MARKER" "$f" 2>/dev/null && rm -f "$f"
+        done
+    fi
+    return 0
+}
 
 case "$1" in
     # Queue a graphics mode for the next boot. supergfxctl -m is
@@ -70,7 +139,7 @@ case "$1" in
             *) echo "Usage: $0 gfx-mode Integrated|Hybrid|AsusEgpu|Vfio" >&2; exit 1 ;;
         esac
         [ -f "$GFX_CONF" ] || { echo "$GFX_CONF not found" >&2; exit 1; }
-        cur=$(sed -n 's/.*"mode": "\([A-Za-z]*\)".*/\1/p' "$GFX_CONF" | head -n1)
+        cur=$(conf_mode)
         if [ "$2" = "$cur" ]; then
             # re-selecting the configured mode cancels a queued switch
             rm -f "$GFX_PENDING"
@@ -86,17 +155,32 @@ case "$1" in
     # while supergfxd is NOT running; invoked by
     # power-deck-gfx-apply.service at shutdown and early boot.
     gfx-commit)
-        [ -s "$GFX_PENDING" ] || exit 0
-        mode=$(head -n1 "$GFX_PENDING")
-        case "$mode" in
-            Integrated|Hybrid|AsusEgpu|Vfio) ;;
-            *) rm -f "$GFX_PENDING"; exit 0 ;;
-        esac
-        [ -f "$GFX_CONF" ] || { rm -f "$GFX_PENDING"; exit 0; }
-        sed -i "s/\"mode\": \"[A-Za-z]*\"/\"mode\": \"$mode\"/" "$GFX_CONF" \
-            && sync "$GFX_CONF" \
-            && rm -f "$GFX_PENDING"
-        exit $?
+        if [ -s "$GFX_PENDING" ]; then
+            mode=$(head -n1 "$GFX_PENDING")
+            case "$mode" in
+                Integrated|Hybrid|AsusEgpu|Vfio) ;;
+                *) mode="" ;;
+            esac
+            if [ -n "$mode" ] && [ -f "$GFX_CONF" ]; then
+                # tolerant of whitespace variations in case supergfxd
+                # rewrites its config in a different style
+                sed -i "s/\"mode\"[[:space:]]*:[[:space:]]*\"[A-Za-z]*\"/\"mode\": \"$mode\"/" "$GFX_CONF"
+                sync "$GFX_CONF"
+                if [ "$(conf_mode)" = "$mode" ]; then
+                    rm -f "$GFX_PENDING"
+                else
+                    echo "gfx-commit: failed to write mode $mode into $GFX_CONF" >&2
+                    nvidia_boot_guard
+                    exit 1
+                fi
+            else
+                rm -f "$GFX_PENDING"
+            fi
+        fi
+        # reconcile the NVIDIA boot guard on every boot/shutdown, even when
+        # nothing was queued (heals external config edits and past failures)
+        nvidia_boot_guard
+        exit 0
         ;;
     extreme)
         echo powersave > /sys/module/pcie_aspm/parameters/policy 2>/dev/null

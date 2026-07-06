@@ -48,7 +48,7 @@ sgfx() {
 }
 
 conf_mode() {
-    sed -n 's/.*"mode": "\([A-Za-z]*\)".*/\1/p' "$CONF" 2>/dev/null | head -n1
+    sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([A-Za-z]*\)".*/\1/p' "$CONF" 2>/dev/null | head -n1
 }
 
 # AsusMuxDgpu is deliberately hidden: MUX switching does not work
@@ -150,7 +150,7 @@ case "${1:-status}" in
             exit 1
         fi
         if ! sudo -n /usr/local/bin/power-mode gfx-mode "$2" 2>&1; then
-            echo "failed to write graphics mode to $CONF" >&2
+            echo "failed to queue graphics mode (see: sudo -n power-mode gfx-mode $2)" >&2
             exit 1
         fi
         echo reboot
