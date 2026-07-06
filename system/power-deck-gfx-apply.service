@@ -6,6 +6,13 @@ Description=Power Deck: commit queued GPU mode to supergfxd config
 # change while running: it would attempt a live driver unload, which
 # wedges in the kernel and hangs the next reboot.
 Before=supergfxd.service
+# Also ordered before the NVIDIA userspace services: when a queued
+# Integrated commit happens at boot (e.g. after a crash skipped the
+# shutdown commit), the module guards must be in place before
+# nvidia-persistenced can re-load the nvidia module via setuid
+# nvidia-modprobe and race supergfxd's dGPU removal (which wedges the
+# boot at a black screen).
+Before=nvidia-persistenced.service nvidia-powerd.service
 After=local-fs.target
 
 [Service]

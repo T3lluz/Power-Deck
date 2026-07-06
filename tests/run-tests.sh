@@ -19,7 +19,7 @@ trap 'rm -rf "$sandbox"' EXIT
 reset_sandbox() {
     rm -rf "$sandbox"/*
     mkdir -p "$sandbox/state" "$sandbox/modprobe.d" "$sandbox/modules-load.d" \
-        "$sandbox/usr-modules-load.d"
+        "$sandbox/usr-modules-load.d" "$sandbox/dropins"
     cat > "$sandbox/supergfxd.conf" <<'EOF'
 {
   "mode": "Hybrid",
@@ -39,6 +39,7 @@ pm() {
     POWER_DECK_MODPROBE_DIR="$sandbox/modprobe.d" \
     POWER_DECK_MODLOAD_DIR="$sandbox/modules-load.d" \
     POWER_DECK_MODLOAD_SRC_DIR="$sandbox/usr-modules-load.d" \
+    POWER_DECK_DROPIN_DIR="$sandbox/dropins" \
     bash "$POWER_MODE" "$@"
 }
 
@@ -118,6 +119,12 @@ check "Integrated mask contains no module names" \
 check "non-nvidia modules-load entries stay untouched" \
     test ! -e "$sandbox/modules-load.d/uinput.conf"
 
+check "Integrated commit writes the nvidia-persistenced drop-in" \
+    grep -q "ConditionPathExists=!" \
+        "$sandbox/dropins/nvidia-persistenced.service.d/power-deck.conf"
+check "Integrated commit writes the nvidia-powerd drop-in" \
+    test -f "$sandbox/dropins/nvidia-powerd.service.d/power-deck.conf"
+
 # switching back to Hybrid removes every guard
 pm gfx-mode Hybrid >/dev/null 2>&1
 pm gfx-commit >/dev/null 2>&1
@@ -125,6 +132,8 @@ check "Hybrid commit removes the modprobe blacklist" \
     test ! -e "$sandbox/modprobe.d/power-deck-integrated.conf"
 check "Hybrid commit removes the modules-load masks" \
     test ! -e "$sandbox/modules-load.d/nvidia-utils.conf"
+check "Hybrid commit removes the service drop-ins" \
+    test ! -e "$sandbox/dropins/nvidia-persistenced.service.d/power-deck.conf"
 
 # guard reconciles even with nothing queued (external config edits heal)
 reset_sandbox

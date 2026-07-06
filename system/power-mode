@@ -51,8 +51,16 @@ GFX_PENDING="$GFX_STATE_DIR/gfx-pending"
 MODPROBE_DIR="${POWER_DECK_MODPROBE_DIR:-/etc/modprobe.d}"
 MODLOAD_DIR="${POWER_DECK_MODLOAD_DIR:-/etc/modules-load.d}"
 MODLOAD_SRC_DIR="${POWER_DECK_MODLOAD_SRC_DIR:-/usr/lib/modules-load.d}"
+DROPIN_DIR="${POWER_DECK_DROPIN_DIR:-/etc/systemd/system}"
 GUARD_MODPROBE="$MODPROBE_DIR/power-deck-integrated.conf"
 GUARD_MARKER="# Managed by Power Deck"
+# NVIDIA userspace services that must not run in Integrated mode:
+# nvidia-persistenced re-loads the nvidia module through the setuid
+# nvidia-modprobe helper (blacklists do not stop explicit loads) and
+# racing that against supergfxd's PCI device removal wedges it in
+# uninterruptible kernel state — which blocks DRM for the whole session
+# and boots to a black screen with a blinking cursor.
+GUARD_SERVICES="nvidia-persistenced.service nvidia-powerd.service"
 
 conf_mode() {
     sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([A-Za-z]*\)".*/\1/p' "$GFX_CONF" 2>/dev/null | head -n1
@@ -96,11 +104,36 @@ nvidia_boot_guard() {
             fi
             echo "$GUARD_MARKER — masks $(basename "$f") while GPU mode is Integrated" > "$dst"
         done
-        # best effort for the current boot: unload anything already inserted
-        # (runs before supergfxd, nvidia-persistenced and the session start)
+        # NVIDIA userspace services load the nvidia module explicitly via
+        # the setuid nvidia-modprobe helper, which ignores blacklists.
+        # Racing supergfxd's PCI removal at boot wedges them unkillable and
+        # the session never starts (black screen, blinking cursor). A
+        # conditional drop-in keeps them off exactly while the guard
+        # blacklist file exists, and restores them the moment it is gone.
+        local svc
+        for svc in $GUARD_SERVICES; do
+            mkdir -p "$DROPIN_DIR/$svc.d"
+            {
+                echo "$GUARD_MARKER (power-mode gfx-commit)."
+                echo "# Skips this service while the GPU mode is Integrated: it would"
+                echo "# re-load the NVIDIA kernel module via setuid nvidia-modprobe and"
+                echo "# race supergfxd's dGPU removal, wedging boot at a black screen."
+                echo "[Unit]"
+                echo "ConditionPathExists=!$GUARD_MODPROBE"
+            } > "$DROPIN_DIR/$svc.d/power-deck.conf"
+        done
+        # best effort for the current boot: stop the loaders and unload
+        # anything already inserted (runs before supergfxd, the NVIDIA
+        # services and the session at boot; harmless later)
         if [ -z "${POWER_DECK_TEST:-}" ]; then
+            if [ "$(systemctl is-system-running 2>/dev/null)" != "stopping" ]; then
+                systemctl daemon-reload 2>/dev/null
+                systemctl stop $GUARD_SERVICES 2>/dev/null
+            fi
             modprobe -r nvidia_drm nvidia_modeset nvidia_uvm nvidia 2>/dev/null
-            if lsmod 2>/dev/null | grep -q '^nvidia'; then
+            # exact module names only — a bare ^nvidia would also match the
+            # unrelated nvidia_wmi_ec_backlight driver
+            if grep -qE '^(nvidia|nvidia_drm|nvidia_modeset|nvidia_uvm) ' /proc/modules 2>/dev/null; then
                 echo "gfx-commit: warning: NVIDIA modules still loaded, supergfxd may fail to switch" >&2
             else
                 echo "gfx-commit: NVIDIA module load guards active (Integrated)"
@@ -112,6 +145,18 @@ nvidia_boot_guard() {
             [ -f "$f" ] || continue
             grep -q "^$GUARD_MARKER" "$f" 2>/dev/null && rm -f "$f"
         done
+        local svc changed=0
+        for svc in $GUARD_SERVICES; do
+            if [ -f "$DROPIN_DIR/$svc.d/power-deck.conf" ]; then
+                rm -f "$DROPIN_DIR/$svc.d/power-deck.conf"
+                rmdir "$DROPIN_DIR/$svc.d" 2>/dev/null
+                changed=1
+            fi
+        done
+        if [ -z "${POWER_DECK_TEST:-}" ] && [ "$changed" = 1 ] \
+            && [ "$(systemctl is-system-running 2>/dev/null)" != "stopping" ]; then
+            systemctl daemon-reload 2>/dev/null
+        fi
     fi
     return 0
 }
