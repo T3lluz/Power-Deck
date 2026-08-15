@@ -1,12 +1,14 @@
 # Power Deck
 
-KDE Plasma widget for ASUS ROG laptops — switch power modes, AniMe, keyboard lighting, FN-lock, charge limit, and temperatures from the panel.
+KDE Plasma widget for ASUS ROG laptops — switch power modes, fan curves, AniMe, keyboard lighting, FN-lock, charge limit, and temperatures from the panel.
 
-Power Deck brings GHelper-style laptop controls to KDE Plasma. Scroll the panel icon to cycle profiles, hover it for live temperatures, or open the popup for full control.
+Power Deck brings GHelper-style laptop controls to KDE Plasma. Scroll the panel icon to cycle profiles, hover it for live temperatures, or open the landscape dashboard for full control.
 
 ## Features
 
+- **Landscape dashboard** — ~4:3 popup: profile tiles on the left, paired controls on the right
 - **Power modes** — Extreme Saver, Power Saver, Balanced, and Performance
+- **Fan curves** — per-mode 8-point CPU/GPU editor (same as Armoury / G-Helper). Switching profiles applies that mode's curve; Custom or Firmware per mode. Survives reboot.
 - **Scroll to switch** — mouse wheel on the panel icon cycles modes
 - **CPU & GPU temperatures & power draw** — live readouts in the popup and in the panel-icon tooltip, color-coded by heat
 - **Battery status** — charge %, time remaining, and AC state in the popup header, tooltip, and (optionally) the panel
@@ -15,7 +17,7 @@ Power Deck brings GHelper-style laptop controls to KDE Plasma. Scroll the panel 
 - **Notifications** — optional desktop notifications on profile switches, plug/unplug, and GPU mode changes
 - **Configurable panel display** — icon only, icon + profile, icon + battery %, or all three
 - **Monochrome theme** — optional neutral grayscale palette (toggle in the widget config) instead of the colored ROG accents
-- **AniMe Matrix** — toggle display, pick Banner or Logo, auto-off on battery
+- **AniMe Matrix** — toggle display, pick Banner, Logo, or Static, auto-off on battery
 - **Keyboard light timer** — idle timeout, brightness slider, keep-on-AC option
 - **FN-lock** — software remapping for media keys vs function keys
 - **Refresh rate** — Auto / low / high switching for the internal display
@@ -24,16 +26,16 @@ Power Deck brings GHelper-style laptop controls to KDE Plasma. Scroll the panel 
 
 | Mode | Profile | Extras |
 |------|---------|--------|
-| Extreme Saver | power-saver | CPU boost off, 60 Hz, Wi-Fi powersave, PCIe ASPM powersave, NVIDIA dGPU runtime suspend (D3cold), near-silent fan curve (fans off until ~72 °C) |
-| Power Saver | power-saver | CPU boost off, normal refresh and peripherals |
+| Extreme Saver | power-saver | CPU boost off, 60 Hz, Wi-Fi powersave, PCIe ASPM powersave, NVIDIA dGPU runtime suspend (D3cold), its own near-silent fan curve (fans off until ~72 °C) |
+| Power Saver | power-saver | CPU boost off, normal refresh and peripherals, its own fan curve (firmware by default) |
+| Balanced | balanced | Normal extras + its own fan curve |
+| Performance | performance | Normal extras + dGPU pinned awake in Hybrid (D0, no runtime suspend) + its own fan curve |
 
 CPU boost is managed by `power-profiles-daemon`: the `power-saver` profile (used by both saver modes) disables per-policy boost on amd_pstate automatically.
-| Balanced | balanced | Normal extras |
-| Performance | performance | Normal extras + dGPU pinned awake in Hybrid (D0, no runtime suspend) |
 
 ### Temperatures and power draw
 
-The popup shows CPU and GPU temperature pills under the header (with live watts where the hardware exposes them — amdgpu PPT, NVIDIA via nvidia-smi, CPU package via RAPL when readable), refreshed every few seconds, and the same readings appear when hovering the panel icon. Colors shift from teal (cool) through amber (70 °C+) to red (85 °C+). Readings come straight from sysfs hwmon sensors — `k10temp`/`zenpower`/`coretemp` for the CPU and `amdgpu`/`nouveau` for the GPU, with ACPI thermal-zone and `nvidia-smi` fallbacks. The NVIDIA fallback only queries the GPU while it is awake, so polling never wakes a runtime-suspended dGPU.
+The popup header shows CPU and GPU temperature pills (with live watts where the hardware exposes them — amdgpu PPT, NVIDIA via nvidia-smi, CPU package via RAPL when readable), refreshed every few seconds, and the same readings appear when hovering the panel icon. Colors shift from teal (cool) through amber (70 °C+) to red (85 °C+). Readings come straight from sysfs hwmon sensors — `k10temp`/`zenpower`/`coretemp` for the CPU and `amdgpu`/`nouveau` for the GPU, with ACPI thermal-zone and `nvidia-smi` fallbacks. The NVIDIA fallback only queries the GPU while it is awake, so polling never wakes a runtime-suspended dGPU.
 
 ### Battery charge limit
 
@@ -48,6 +50,14 @@ Mode changes are staged in `/var/lib/power-deck/gfx-pending` (via the `power-mod
 Unlike GHelper on Windows, Integrated ↔ Hybrid cannot switch live on Linux: supergfxd requires the session to end for these changes (verified even with PCI `hotplug_type` enabled), because the compositor holds the display stack. In practice you rarely need to switch, though — in Hybrid mode the NVIDIA dGPU runtime-suspends to D3cold (~0 W) whenever it is unused, so battery life matches Integrated until an app actually wakes the dGPU.
 
 The exception is the **Performance** profile: in Hybrid mode it pins the dGPU awake (`power/control = on`, kept in D0) so it never runtime-suspends. That keeps the card instantly available to apps and games — no wake-up latency, and offload-aware launchers always see a ready dGPU — at the cost of the idle dGPU draw. Switching to any other profile sets it back to `auto`, so it resumes suspending to D3cold when idle. In Integrated mode there is no dGPU on the bus, so Performance behaves like the other profiles. Note this keeps the dGPU *available*; per-app render offload still follows the usual PRIME mechanism (`prime-run` / `__NV_PRIME_RENDER_OFFLOAD`, or per-game launch options) for software that doesn't pick the dGPU on its own.
+
+### Fan curves
+
+The **Fans** chip in the popup header opens an 8-point CPU/GPU curve editor. Each power mode has its own stored curve (`~/.local/state/power-deck-fans/`). Extreme Saver and Power Saver both use the firmware LowPower slot, so Power Deck keeps two copies and writes the active one when you switch. Balanced and Performance have their own firmware slots.
+
+**Custom** writes the 8 points through asusd D-Bus and enables them; **Firmware** hands the fans back to the BIOS curve for that mode (your points stay stored). Switching profiles — from the tiles, the panel scroll, or at login via `ghelper-restore` — applies the mode you landed on. A login-time re-apply covers the race where asusd finishes later than the session.
+
+Calibration (`fan-ctl calibrate`) runs a flat 100% curve, records peak RPM, then restores your points. That max is cosmetic (the % readout); it does not change how the EC interpolates.
 
 ## Requirements
 
@@ -142,7 +152,7 @@ AC detection for Auto is deliberately robust so it doesn't get stuck at 60 Hz wh
 
 ```bash
 ghelper-profile extreme|power|balanced|performance|status
-anime-ctl on|off|banner|logo|battery-off on|off|status
+anime-ctl on|off|banner|logo|static|battery-off on|off|status
 kbd-idle-ctl on|off|timeout 60|keep-ac on|off|brightness 0-3|status
 fnlock-ctl on|off|status
 refresh-ctl auto|low|high|sync|status
@@ -150,6 +160,7 @@ temp-ctl                  # prints "<cpuT> <gpuT> <cpuW> <gpuW>" ("-" if unavail
 charge-ctl status|oneshot|<20-100>
 battery-ctl               # prints "<state> <percent> <minutes> <ac> <watts>"
 gfx-ctl status|set <Mode> # live GPU mode + queue a switch for next boot
+fan-ctl status|set|enable|apply|preset|calibrate
 ```
 
 ## Uninstall

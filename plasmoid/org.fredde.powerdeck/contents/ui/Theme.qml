@@ -69,17 +69,20 @@ QtObject {
     // active per-section glyphs take a fitting hue normally and the chosen
     // accent in monochrome.
     readonly property color iconHeader: monochrome ? monoNeutral : "#8da4c0"
+    readonly property color iconProfiles: monochrome ? monoSel : hueAccent   // indigo
     readonly property color iconGraphics: monochrome ? monoSel : "#a78bfa"  // violet
     readonly property color iconAnime: monochrome ? monoSel : "#f472b6"     // pink
     readonly property color iconKbd: monochrome ? monoSel : "#60a5fa"       // blue
     readonly property color iconRefresh: monochrome ? monoSel : "#22d3ee"   // cyan
     readonly property color iconCharge: monochrome ? monoSel : "#34d399"    // green
     readonly property color iconFn: monochrome ? monoSel : "#f4b73d"        // amber
+    readonly property color iconFan: monochrome ? monoSel : "#fb923c"       // orange
 
     // ---- animation ----
     readonly property int durFast: 140
     readonly property int durMed: 240
     readonly property int durSlow: 380
+    readonly property int durPage: 360
     readonly property int easeOut: Easing.OutCubic
     readonly property int easeBack: Easing.OutBack
 

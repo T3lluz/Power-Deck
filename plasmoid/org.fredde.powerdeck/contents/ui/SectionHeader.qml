@@ -52,7 +52,7 @@ RowLayout {
         color: root.active ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
         font.weight: Font.DemiBold
-        font.letterSpacing: 1.6
+        font.letterSpacing: 1.1
         elide: Text.ElideRight
         Behavior on color { ColorAnimation { duration: Theme.durMed } }
     }

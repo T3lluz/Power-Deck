@@ -13,8 +13,11 @@ import org.kde.plasma.plasma5support as Plasma5Support
 PlasmoidItem {
     id: root
 
-    // card container that visually groups one section of controls
+    // Card chrome around a section. Height comes from the inner column —
+    // never anchors.fill it vertically, or Layout.fillHeight on the card
+    // collapses implicitHeight and sibling cards paint on top of each other.
     component SectionCard: Rectangle {
+        id: cardRoot
         default property alias content: cardColumn.data
 
         Layout.fillWidth: true
@@ -23,11 +26,13 @@ PlasmoidItem {
         color: Theme.alpha(Kirigami.Theme.textColor, 0.045)
         border.width: 1
         border.color: Theme.alpha(Kirigami.Theme.textColor, 0.08)
+        clip: true
 
         ColumnLayout {
             id: cardColumn
-            anchors.fill: parent
-            anchors.margins: Kirigami.Units.largeSpacing
+            x: Kirigami.Units.largeSpacing
+            y: Kirigami.Units.largeSpacing
+            width: cardRoot.width - Kirigami.Units.largeSpacing * 2
             spacing: Kirigami.Units.smallSpacing
         }
     }
@@ -44,8 +49,12 @@ PlasmoidItem {
             : temp >= 70 ? Theme.amber
             : Theme.teal
 
-        Layout.fillWidth: true
-        Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.4)
+        implicitWidth: pillRow.implicitWidth + Kirigami.Units.largeSpacing * 2
+        Layout.fillWidth: false
+        Layout.preferredWidth: implicitWidth
+        Layout.maximumWidth: implicitWidth
+        Layout.alignment: Qt.AlignVCenter
+        Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
         radius: height / 2
         color: Theme.alpha(heat, 0.10)
         border.width: 1
@@ -59,6 +68,7 @@ PlasmoidItem {
         }
 
         RowLayout {
+            id: pillRow
             anchors.centerIn: parent
             spacing: Kirigami.Units.smallSpacing
 
@@ -111,6 +121,61 @@ PlasmoidItem {
 
     property int chargeLimit: 100
     property bool chargeSliderPressed: false
+
+    property bool fanAvailable: false
+    property bool fanCustom: false
+    property bool fanPanelOpen: false
+    property bool fanSliderPressed: false
+    // While the overlay is open the strips are the source of truth.
+    // Status polls only push points when this is set (open / profile /
+    // preset). Otherwise the 3s refresh snaps the bars back.
+    property bool fanWantReload: false
+    property string fanProfile: "balanced"
+    property string fanActiveProfile: "balanced"
+    property int fanCpuRpm: -1
+    property int fanGpuRpm: -1
+    property int fanCpuMaxRpm: 5500
+    property int fanGpuMaxRpm: 5600
+    property bool fanCalibrating: false
+    property bool fanDirty: false
+    property string fanCpuCurve: ""
+    property string fanGpuCurve: ""
+    property string fanEditCpu: ""
+    property string fanEditGpu: ""
+
+    signal fanCurvesLoaded(string cpu, string gpu)
+
+    readonly property string fanSaveKind: {
+        if (!fanCustom)
+            return "firmware"
+        if (fanCalibrating || fanSliderPressed || fanWriteHold.running)
+            return "saving"
+        if (fanDirty)
+            return "unsaved"
+        if (fanProfile === fanActiveProfile)
+            return "applied"
+        return "saved"
+    }
+
+    readonly property string fanSaveLabel: {
+        if (fanSaveKind === "firmware")
+            return i18n("Firmware")
+        if (fanSaveKind === "saving")
+            return i18n("Saving…")
+        if (fanSaveKind === "unsaved")
+            return i18n("Unsaved")
+        if (fanSaveKind === "applied")
+            return i18n("Saved · Applied")
+        return i18n("Saved")
+    }
+
+    readonly property color fanSaveColor: {
+        if (fanSaveKind === "applied" || fanSaveKind === "saved")
+            return Theme.green
+        if (fanSaveKind === "saving" || fanSaveKind === "unsaved")
+            return Theme.amber
+        return Theme.muted
+    }
 
     property string batteryState: "unknown"
     property int batteryPercent: -1
@@ -180,6 +245,7 @@ PlasmoidItem {
     readonly property string chargeScriptPath: binDir + "/charge-ctl"
     readonly property string batteryScriptPath: binDir + "/battery-ctl"
     readonly property string gfxScriptPath: binDir + "/gfx-ctl"
+    readonly property string fanScriptPath: binDir + "/fan-ctl"
     readonly property var profiles: ["extreme", "power", "balanced", "performance"]
 
     readonly property var profileData: ({
@@ -221,6 +287,18 @@ PlasmoidItem {
     // icon always has something to draw.
     function glyphKind(profile) {
         return profiles.indexOf(profile) !== -1 ? profile : "balanced"
+    }
+
+    function fanLabel(profile) {
+        if (profile === "extreme") return i18n("Extreme")
+        if (profile === "power") return i18n("Power")
+        if (profile === "balanced") return i18n("Balanced")
+        if (profile === "performance") return i18n("Performance")
+        return profile
+    }
+
+    function isFanMode(profile) {
+        return profiles.indexOf(profile) !== -1
     }
 
     function dataFor(profile) {
@@ -288,10 +366,10 @@ PlasmoidItem {
         return line1 + "\n" + line2
     }
 
-    switchWidth: Kirigami.Units.gridUnit * 19
-    switchHeight: fullRepresentationItem && fullRepresentationItem.implicitHeight > 0
-        ? fullRepresentationItem.implicitHeight
-        : Kirigami.Units.gridUnit * 12
+    // Stay compact in the panel; the landscape dashboard is the popup.
+    preferredRepresentation: compactRepresentation
+    switchWidth: Kirigami.Units.gridUnit * 32
+    switchHeight: Kirigami.Units.gridUnit * 22
 
     Plasma5Support.DataSource {
         id: execDataSource
@@ -343,7 +421,7 @@ PlasmoidItem {
                         var parts = output.split(" ")
                         if (parts.length >= 2) {
                             root.animeOn = (parts[0] === "on")
-                            if (parts[1] === "banner" || parts[1] === "logo") {
+                            if (parts[1] === "banner" || parts[1] === "logo" || parts[1] === "static") {
                                 root.animeShape = parts[1]
                             }
                             if (parts.length >= 3) {
@@ -471,6 +549,20 @@ PlasmoidItem {
                             root.chargeLimit = cl
                         }
                     }
+                } else if (sourceName.indexOf("fan-ctl") !== -1) {
+                    if (sourceName.indexOf("status") !== -1) {
+                        root.parseFanStatus(output)
+                    } else if (sourceName.indexOf("cal-get") !== -1
+                            || sourceName.indexOf("calibrate") !== -1) {
+                        root.parseFanCal(output)
+                        if (sourceName.indexOf("calibrate") !== -1) {
+                            root.fanCalibrating = false
+                            root.fanWantReload = true
+                            root.refreshFan()
+                        }
+                    } else {
+                        root.refreshFan()
+                    }
                 } else if (sourceName.indexOf("fnlock-ctl") !== -1) {
                     if (sourceName.indexOf("status") !== -1) {
                         if (output === "on" || output === "off") {
@@ -487,6 +579,7 @@ PlasmoidItem {
                         // of waiting for the user to click a profile card
                         if (currentProfile !== "unknown" && output !== currentProfile) {
                             execDataSource.connectSource(root.refreshScriptPath + " sync")
+                            root.followFanProfile(output)
                         }
                         previousProfile = currentProfile
                         currentProfile = output
@@ -503,9 +596,19 @@ PlasmoidItem {
         execDataSource.connectSource(scriptPath + " " + profile)
         previousProfile = currentProfile
         currentProfile = profile
+        followFanProfile(profile)
         switchReset.restart()
         notify(i18n("Power profile: %1", dataFor(profile).name),
             dataFor(profile).desc)
+    }
+
+    function followFanProfile(profile) {
+        if (!isFanMode(profile))
+            return
+        fanActiveProfile = profile
+        fanProfile = profile
+        fanWantReload = true
+        refreshFan()
     }
 
     function cycleProfile(direction) {
@@ -596,6 +699,183 @@ PlasmoidItem {
         execDataSource.connectSource(refreshScriptPath + " " + mode)
     }
 
+    function parseFanCurve(s) {
+        var out = []
+        if (!s) return out
+        var parts = String(s).trim().split(",")
+        for (var i = 0; i < parts.length; i++) {
+            var kv = parts[i].split(":")
+            if (kv.length < 2) continue
+            var t = parseInt(kv[0], 10)
+            var p = parseInt(kv[1], 10)
+            if (!isNaN(t) && !isNaN(p))
+                out.push({ t: t, p: p })
+        }
+        return out
+    }
+
+    function parseFanStatus(output) {
+        var lines = String(output).split("\n")
+        if (lines.length < 1) return
+        var a = lines[0].trim().split(/\s+/)
+        fanAvailable = (a[0] === "yes")
+        if (a.length >= 2 && !fanWriteHold.running)
+            fanCustom = (a[1] === "custom")
+        if (a.length >= 3 && isFanMode(a[2]) && (!fanPanelOpen || fanWantReload))
+            fanProfile = a[2]
+        if (a.length >= 6 && isFanMode(a[5]))
+            fanActiveProfile = a[5]
+        else if (a.length >= 3 && isFanMode(a[2]) && !fanPanelOpen)
+            fanActiveProfile = a[2]
+        if (a.length >= 5) {
+            var cr = parseInt(a[3], 10)
+            var gr = parseInt(a[4], 10)
+            fanCpuRpm = isNaN(cr) ? -1 : cr
+            fanGpuRpm = isNaN(gr) ? -1 : gr
+            if (fanCpuRpm > fanCpuMaxRpm && fanCpuRpm < 10400)
+                setFanMaxRpm(fanCpuRpm, fanGpuMaxRpm)
+            if (fanGpuRpm > fanGpuMaxRpm && fanGpuRpm < 10400)
+                setFanMaxRpm(Math.max(fanCpuMaxRpm, fanCpuRpm), fanGpuRpm)
+        }
+        if (lines.length >= 2 && lines[1].indexOf("cpu") === 0)
+            fanCpuCurve = lines[1].replace(/^cpu\s*/, "")
+        if (lines.length >= 3 && lines[2].indexOf("gpu") === 0)
+            fanGpuCurve = lines[2].replace(/^gpu\s*/, "")
+        if (fanSliderPressed || fanWriteHold.running)
+            return
+        if (fanPanelOpen && !fanWantReload) {
+            syncFanDirty()
+            return
+        }
+        fanWantReload = false
+        fanEditCpu = fanCpuCurve
+        fanEditGpu = fanGpuCurve
+        fanDirty = false
+        fanCurvesLoaded(fanCpuCurve, fanGpuCurve)
+    }
+
+    function formatRpm(n) {
+        if (n < 0) return i18n("— RPM")
+        return i18n("%1 RPM", n)
+    }
+
+    function curvesClose(a, b) {
+        var pa = parseFanCurve(a)
+        var pb = parseFanCurve(b)
+        if (pa.length === 0 && pb.length === 0)
+            return true
+        if (pa.length !== pb.length)
+            return false
+        for (var i = 0; i < pa.length; i++) {
+            if (pa[i].t !== pb[i].t)
+                return false
+            if (Math.abs(pa[i].p - pb[i].p) > 1)
+                return false
+        }
+        return true
+    }
+
+    function syncFanDirty() {
+        if (!fanCustom) {
+            fanDirty = false
+            return
+        }
+        var cpu = fanEditCpu.length > 0 ? fanEditCpu : fanCpuCurve
+        var gpu = fanEditGpu.length > 0 ? fanEditGpu : fanGpuCurve
+        fanDirty = !curvesClose(cpu, fanCpuCurve) || !curvesClose(gpu, fanGpuCurve)
+    }
+
+    function parseFanCal(output) {
+        var line = String(output).trim().split("\n").pop()
+        var p = line.replace(/^ok\s+/, "").trim().split(/\s+/)
+        if (p.length < 2) return
+        var c = parseInt(p[0], 10)
+        var g = parseInt(p[1], 10)
+        if (isNaN(c) || isNaN(g) || c < 2000 || g < 2000)
+            return
+        setFanMaxRpm(c, g)
+    }
+
+    function setFanMaxRpm(cpu, gpu) {
+        fanCpuMaxRpm = cpu
+        fanGpuMaxRpm = gpu
+        if (Plasmoid.configuration.fanCpuMaxRpm !== cpu)
+            Plasmoid.configuration.fanCpuMaxRpm = cpu
+        if (Plasmoid.configuration.fanGpuMaxRpm !== gpu)
+            Plasmoid.configuration.fanGpuMaxRpm = gpu
+    }
+
+    function refreshFan() {
+        var extra = fanPanelOpen && fanProfile.length > 0 ? " " + fanProfile : ""
+        execDataSource.connectSource(fanScriptPath + " status" + extra)
+        execDataSource.connectSource(fanScriptPath + " cal-get")
+    }
+
+    function startFanCalibrate() {
+        if (fanCalibrating) return
+        fanCalibrating = true
+        execDataSource.connectSource(fanScriptPath + " calibrate " + fanProfile)
+    }
+
+    function openFanPanel() {
+        if (!fanAvailable) return
+        fanProfile = isFanMode(currentProfile) ? currentProfile : fanActiveProfile
+        fanPanelOpen = true
+        fanWantReload = true
+        if (fanCpuCurve.length > 0 || fanGpuCurve.length > 0)
+            fanCurvesLoaded(fanCpuCurve, fanGpuCurve)
+        refreshFan()
+    }
+
+    function closeFanPanel() {
+        fanPanelOpen = false
+    }
+
+    function setFanEnabled(on) {
+        fanCustom = on
+        execDataSource.connectSource(fanScriptPath + " enable " + fanProfile
+            + (on ? " on" : " off"))
+    }
+
+    function applyFanCurve(which, data) {
+        if (!data) return
+        fanCustom = true
+        fanDirty = true
+        fanWriteHold.restart()
+        if (which === "cpu")
+            fanEditCpu = data
+        else
+            fanEditGpu = data
+        execDataSource.connectSource(fanScriptPath + " set " + fanProfile
+            + " " + which + " " + data)
+        execDataSource.connectSource(fanScriptPath + " enable " + fanProfile + " on")
+    }
+
+    function fanPreset(name) {
+        fanCustom = true
+        fanDirty = true
+        fanWantReload = true
+        execDataSource.connectSource(fanScriptPath + " preset " + fanProfile + " " + name)
+    }
+
+    function selectFanProfile(prof) {
+        if (!isFanMode(prof))
+            return
+        fanProfile = prof
+        fanWantReload = true
+        refreshFan()
+    }
+
+    Timer {
+        id: fanWriteHold
+        interval: 2500
+        repeat: false
+        onTriggered: {
+            if (root.fanPanelOpen)
+                root.refreshFan()
+        }
+    }
+
     function refreshAnime() {
         // sync is idempotent: it only touches asusctl when the physical
         // display state disagrees with the saved preference + power source.
@@ -613,6 +893,7 @@ PlasmoidItem {
         execDataSource.connectSource(chargeScriptPath + " status")
         execDataSource.connectSource(batteryScriptPath + " status")
         execDataSource.connectSource(gfxScriptPath + " status")
+        refreshFan()
     }
 
     Timer {
@@ -693,241 +974,917 @@ PlasmoidItem {
         id: fullRep
         collapseMarginsHint: true
 
-        Layout.preferredWidth: Kirigami.Units.gridUnit * 19
-        Layout.minimumWidth: Kirigami.Units.gridUnit * 18
-        Layout.maximumWidth: Kirigami.Units.gridUnit * 20
-        implicitHeight: menuColumn.implicitHeight + Kirigami.Units.largeSpacing * 2
+        // Landscape dashboard: one 2-column grid so every row shares
+        // the same gutter. Size to content — never lock height to a
+        // fillHeight child or cards collapse and overlap.
+        readonly property int edgeMargin: Kirigami.Units.smallSpacing * 1.5
+        readonly property int gutter: Kirigami.Units.smallSpacing
+        readonly property int railWidth: Kirigami.Units.gridUnit * 18
+        readonly property int popupWidth: Kirigami.Units.gridUnit * 40
+
+        Layout.preferredWidth: popupWidth
+        Layout.minimumWidth: Kirigami.Units.gridUnit * 36
+        Layout.maximumWidth: Kirigami.Units.gridUnit * 44
+        implicitWidth: popupWidth
+        implicitHeight: body.implicitHeight + edgeMargin
         Layout.minimumHeight: implicitHeight
         Layout.preferredHeight: implicitHeight
         Layout.maximumHeight: implicitHeight
 
-        ColumnLayout {
-            id: menuColumn
+        Item {
+            id: pageHost
             anchors.fill: parent
-            anchors.margins: Kirigami.Units.largeSpacing
-            spacing: Kirigami.Units.smallSpacing * 1.5
+            clip: true
 
-            // ================= header =================
-            RowLayout {
+            // 0 = dashboard, 1 = fan sheet. One value drives both pages
+            // so they stay locked and never cross-fade on top of each other.
+            property real pageShift: root.fanPanelOpen ? 1 : 0
+            Behavior on pageShift {
+                NumberAnimation {
+                    duration: Theme.durPage
+                    easing.type: Theme.easeOut
+                }
+            }
+
+            ColumnLayout {
+                id: body
+                width: pageHost.width > 0 ? pageHost.width : fullRep.popupWidth
+                x: -width * pageHost.pageShift
+                spacing: fullRep.gutter
+                enabled: !root.fanPanelOpen
+
+            // ================= header + live telemetry =================
+            Rectangle {
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing * 1.5
+                Layout.leftMargin: fullRep.edgeMargin
+                Layout.rightMargin: fullRep.edgeMargin
+                Layout.topMargin: fullRep.edgeMargin
+                implicitHeight: headerCol.implicitHeight + Kirigami.Units.largeSpacing * 2
+                radius: Kirigami.Units.smallSpacing * 1.5
+                color: Theme.alpha(Kirigami.Theme.textColor, 0.045)
+                border.width: 1
+                border.color: Theme.alpha(Kirigami.Theme.textColor, 0.08)
+                clip: true
 
-                ProfileGlyph {
-                    id: headerBadge
-                    kind: glyphKind(currentProfile)
-                    glyphColor: dataFor(currentProfile).accent
-                    glyphSize: Math.round(Kirigami.Units.gridUnit * 2.1)
-                    active: true
-                    Layout.preferredWidth: glyphSize
-                    Layout.preferredHeight: glyphSize
-                    Layout.alignment: Qt.AlignVCenter
-                    onKindChanged: play()
+                ColumnLayout {
+                    id: headerCol
+                    x: Kirigami.Units.largeSpacing
+                    y: Kirigami.Units.largeSpacing
+                    width: parent.width - Kirigami.Units.largeSpacing * 2
+                    spacing: Kirigami.Units.smallSpacing
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing * 1.5
+
+                        ProfileGlyph {
+                            id: headerBadge
+                            kind: glyphKind(currentProfile)
+                            glyphColor: dataFor(currentProfile).accent
+                            glyphSize: Math.round(Kirigami.Units.gridUnit * 2.1)
+                            active: true
+                            Layout.preferredWidth: glyphSize
+                            Layout.preferredHeight: glyphSize
+                            Layout.alignment: Qt.AlignVCenter
+                            onKindChanged: play()
+                        }
+
+                        ColumnLayout {
+                            spacing: 0
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: Kirigami.Units.gridUnit * 8
+                            Layout.alignment: Qt.AlignVCenter
+
+                            PC3.Label {
+                                Layout.fillWidth: true
+                                text: i18n("POWER DECK")
+                                color: Theme.muted
+                                font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
+                                font.weight: Font.DemiBold
+                                font.letterSpacing: 2.2
+                                elide: Text.ElideRight
+                            }
+
+                            PC3.Label {
+                                Layout.fillWidth: true
+                                text: dataFor(currentProfile).name
+                                color: Kirigami.Theme.textColor
+                                font.weight: Font.Bold
+                                font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.25)
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: false
+                            Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                            spacing: Kirigami.Units.smallSpacing
+
+                            RowLayout {
+                                Layout.alignment: Qt.AlignRight
+                                spacing: Kirigami.Units.smallSpacing
+
+                        TempPill {
+                            sensorLabel: i18n("CPU")
+                            temp: root.cpuTemp
+                            watts: root.cpuWatts
+                        }
+
+                        TempPill {
+                            sensorLabel: i18n("GPU")
+                            temp: root.gpuTemp
+                            watts: root.gpuWatts
+                        }
+
+                        Rectangle {
+                            id: drawPill
+                            visible: root.batteryState === "discharging" && root.batteryWatts >= 0
+                            readonly property color drainColor: root.batteryWatts >= 35 ? Theme.red
+                                : root.batteryWatts >= 20 ? Theme.amber
+                                : Theme.green
+                            implicitWidth: drawRow.implicitWidth + Kirigami.Units.largeSpacing * 2
+                            Layout.fillWidth: false
+                            Layout.preferredWidth: implicitWidth
+                            Layout.maximumWidth: implicitWidth
+                            Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
+                            Layout.alignment: Qt.AlignVCenter
+                            radius: height / 2
+                            color: Theme.alpha(drainColor, 0.10)
+                            border.width: 1
+                            border.color: Theme.alpha(drainColor, 0.3)
+                            Behavior on border.color { ColorAnimation { duration: Theme.durSlow } }
+
+                            RowLayout {
+                                id: drawRow
+                                anchors.centerIn: parent
+                                spacing: Kirigami.Units.smallSpacing
+
+                                PC3.Label {
+                                    text: i18n("DRAW")
+                                    color: Kirigami.Theme.disabledTextColor
+                                    font.weight: Font.DemiBold
+                                    font.letterSpacing: 1.2
+                                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
+                                }
+
+                                PC3.Label {
+                                    text: i18n("%1 W", root.batteryWatts)
+                                    color: drawPill.drainColor
+                                    font.weight: Font.Bold
+                                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                                }
+                            }
+                        }
+
+                            }
+
+                            RowLayout {
+                                Layout.alignment: Qt.AlignRight
+                                spacing: Kirigami.Units.smallSpacing
+
+                        // live battery readout
+                        Rectangle {
+                            visible: root.batteryPercent >= 0
+                            readonly property color batColor: root.batteryState === "charging" ? Theme.green
+                                : (root.batteryState === "discharging" && root.batteryPercent <= 20) ? Theme.red
+                                : root.onAC ? Theme.green
+                                : Theme.teal
+                            Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
+                            Layout.preferredWidth: batLabel.implicitWidth + Kirigami.Units.largeSpacing * 2
+                            Layout.alignment: Qt.AlignVCenter
+                            radius: height / 2
+                            color: Theme.alpha(batColor, 0.12)
+                            border.width: 1
+                            border.color: Theme.alpha(batColor, 0.35)
+                            Behavior on border.color { ColorAnimation { duration: Theme.durMed } }
+
+                            PC3.Label {
+                                id: batLabel
+                                anchors.centerIn: parent
+                                text: {
+                                    var t = i18n("%1%", root.batteryPercent)
+                                    var left = root.formatMinutes(root.batteryMinutes)
+                                    if (root.batteryState === "discharging" && left.length > 0)
+                                        return t + " · " + left
+                                    if (root.batteryState === "charging")
+                                        return left.length > 0 ? t + " ↑ " + left : t + " ↑"
+                                    return t
+                                }
+                                color: parent.batColor
+                                font.weight: Font.DemiBold
+                                font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                            }
+                        }
+
+                        // live refresh-rate readout
+                        Rectangle {
+                            Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
+                            Layout.preferredWidth: hzLabel.implicitWidth + Kirigami.Units.largeSpacing * 2
+                            Layout.alignment: Qt.AlignVCenter
+                            radius: height / 2
+                            color: Theme.alpha(Theme.accent, 0.12)
+                            border.width: 1
+                            border.color: Theme.alpha(Theme.accent, 0.35)
+
+                            PC3.Label {
+                                id: hzLabel
+                                anchors.centerIn: parent
+                                text: i18n("%1 Hz", root.refreshCurrentHz)
+                                color: Theme.accentBright
+                                font.weight: Font.DemiBold
+                                font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                            }
+                        }
+
+                        Rectangle {
+                            id: fanChip
+                            visible: root.fanAvailable
+                            readonly property bool hovered: fanChipMouse.containsMouse
+                            readonly property bool pressed: fanChipMouse.pressed
+                            readonly property color chipAccent: root.fanCustom ? Theme.iconFan : Theme.accent
+
+                            implicitWidth: fanChipRow.implicitWidth + Kirigami.Units.largeSpacing * 1.6
+                            implicitHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
+                            Layout.preferredHeight: implicitHeight
+                            Layout.preferredWidth: implicitWidth
+                            Layout.alignment: Qt.AlignVCenter
+                            radius: height / 2
+                            scale: pressed ? 0.94 : 1.0
+                            color: Theme.alpha(chipAccent, hovered ? 0.22 : 0.14)
+                            border.width: 1
+                            border.color: Theme.alpha(chipAccent, hovered ? 0.70 : 0.50)
+
+                            Behavior on color {
+                                ColorAnimation { duration: Theme.durFast; easing.type: Theme.easeOut }
+                            }
+                            Behavior on border.color {
+                                ColorAnimation { duration: Theme.durFast; easing.type: Theme.easeOut }
+                            }
+                            Behavior on scale {
+                                NumberAnimation { duration: Theme.durFast; easing.type: Theme.easeOut }
+                            }
+
+                            RowLayout {
+                                id: fanChipRow
+                                anchors.centerIn: parent
+                                spacing: Kirigami.Units.smallSpacing * 0.55
+
+                                ProfileIconBadge {
+                                    iconSource: Qt.resolvedUrl("../images/fan.svg")
+                                    accentColor: fanChip.chipAccent
+                                    glyphColor: fanChip.chipAccent
+                                    badgeSize: Math.round(Kirigami.Units.gridUnit * 1.05)
+                                    active: true
+                                    bare: true
+                                }
+
+                                PC3.Label {
+                                    text: i18n("FANS")
+                                    color: fanChip.hovered ? fanChip.chipAccent : Kirigami.Theme.disabledTextColor
+                                    font.weight: Font.DemiBold
+                                    font.letterSpacing: 1.2
+                                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
+                                    Behavior on color {
+                                        ColorAnimation { duration: Theme.durFast; easing.type: Theme.easeOut }
+                                    }
+                                }
+
+                                PC3.Label {
+                                    text: root.formatRpm(Math.max(root.fanCpuRpm, root.fanGpuRpm))
+                                    color: fanChip.chipAccent
+                                    font.weight: Font.DemiBold
+                                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                                }
+
+                                PC3.Label {
+                                    text: "›"
+                                    color: fanChip.chipAccent
+                                    font.weight: Font.DemiBold
+                                    font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 1.15)
+                                    opacity: fanChip.hovered ? 1 : 0.62
+                                    Behavior on opacity {
+                                        NumberAnimation { duration: Theme.durFast; easing.type: Theme.easeOut }
+                                    }
+                                }
+                            }
+
+                            MouseArea {
+                                id: fanChipMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.openFanPanel()
+                            }
+
+                            PC3.ToolTip.visible: fanChipMouse.containsMouse
+                            PC3.ToolTip.delay: 350
+                            PC3.ToolTip.text: i18n("Open fan curve editor")
+                        }
+                            }
+                        }
+                    }
+                }
+            }
+
+            GridLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: fullRep.edgeMargin
+                Layout.rightMargin: fullRep.edgeMargin
+                columns: 2
+                columnSpacing: fullRep.gutter
+                rowSpacing: fullRep.gutter
+
+                SectionCard {
+                    Layout.fillWidth: false
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: fullRep.railWidth
+                    Layout.minimumWidth: fullRep.railWidth
+                    Layout.maximumWidth: fullRep.railWidth
+
+                    SectionHeader {
+                        title: i18n("PROFILES")
+                        iconSource: Qt.resolvedUrl("../images/profiles.svg")
+                        glyphColor: Theme.iconProfiles
+                        active: true
+                    }
+
+                    GridLayout {
+                        Layout.fillWidth: true
+                        columns: 2
+                        rowSpacing: Kirigami.Units.smallSpacing
+                        columnSpacing: Kirigami.Units.smallSpacing
+
+                        Repeater {
+                            model: root.profiles
+
+                            ProfileCard {
+                                required property string modelData
+                                profileName: dataFor(modelData).name
+                                profileDesc: dataFor(modelData).desc
+                                profileKind: root.glyphKind(modelData)
+                                accentColor: dataFor(modelData).accent
+                                burstEffect: dataFor(modelData).burst || "pulse"
+                                isActive: currentProfile === modelData
+                                preferTile: true
+                                onClicked: setProfile(modelData)
+                            }
+                        }
+                    }
                 }
 
                 ColumnLayout {
-                    spacing: 0
                     Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 16
+                    spacing: fullRep.gutter
 
-                    PC3.Label {
-                        Layout.fillWidth: true
-                        text: i18n("POWER DECK")
-                        color: Theme.muted
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
-                        font.weight: Font.DemiBold
-                        font.letterSpacing: 2.2
-                        elide: Text.ElideRight
-                    }
+                    SectionCard {
+                        visible: root.gfxSupported.length > 0
 
-                    PC3.Label {
-                        Layout.fillWidth: true
-                        text: dataFor(currentProfile).name
-                        color: Kirigami.Theme.textColor
-                        font.weight: Font.Bold
-                        font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.25)
-                        elide: Text.ElideRight
-                    }
-                }
+                        SectionHeader {
+                            title: i18n("GRAPHICS")
+                            iconSource: Qt.resolvedUrl("../images/gpu.svg")
+                            glyphColor: Theme.iconGraphics
+                            active: true
 
-                // live battery readout
-                Rectangle {
-                    visible: root.batteryPercent >= 0
-                    readonly property color batColor: root.batteryState === "charging" ? Theme.green
-                        : (root.batteryState === "discharging" && root.batteryPercent <= 20) ? Theme.red
-                        : root.onAC ? Theme.green
-                        : Theme.teal
-                    Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
-                    Layout.preferredWidth: batLabel.implicitWidth + Kirigami.Units.largeSpacing * 2
-                    radius: height / 2
-                    color: Theme.alpha(batColor, 0.12)
-                    border.width: 1
-                    border.color: Theme.alpha(batColor, 0.35)
-                    Behavior on border.color { ColorAnimation { duration: Theme.durMed } }
+                            PC3.Label {
+                                visible: root.gfxPendingMode !== "none" || root.gfxPendingAction !== "none"
+                                text: {
+                                    var act = root.gfxPendingAction === "reboot" ? i18n("reboot") : i18n("logout")
+                                    return root.gfxPendingMode !== "none"
+                                        ? i18n("%1 after %2", root.gfxLabel(root.gfxPendingMode), act)
+                                        : i18n("Apply with %1", act)
+                                }
+                                color: Theme.amber
+                                font.weight: Font.DemiBold
+                                font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                            }
 
-                    PC3.Label {
-                        id: batLabel
-                        anchors.centerIn: parent
-                        text: {
-                            var t = i18n("%1%", root.batteryPercent)
-                            var left = root.formatMinutes(root.batteryMinutes)
-                            if (root.batteryState === "discharging" && left.length > 0)
-                                return t + " · " + left
-                            if (root.batteryState === "charging")
-                                return left.length > 0 ? t + " ↑ " + left : t + " ↑"
-                            return t
+                            Rectangle {
+                                readonly property color tagColor: root.gfxDgpu === "active" ? Theme.amber : Theme.teal
+                                readonly property string tagText: {
+                                    if (root.gfxMode === "AsusMuxDgpu") return i18n("dGPU drives display")
+                                    if (root.gfxDgpu === "off") return i18n("iGPU only")
+                                    if (root.gfxDgpu === "active") return i18n("iGPU + dGPU on")
+                                    return i18n("iGPU + dGPU asleep")
+                                }
+                                implicitWidth: tagLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
+                                implicitHeight: tagLabel.implicitHeight + Kirigami.Units.smallSpacing
+                                radius: height / 2
+                                color: Theme.alpha(tagColor, 0.14)
+                                border.width: 1
+                                border.color: Theme.alpha(tagColor, 0.45)
+
+                                PC3.Label {
+                                    id: tagLabel
+                                    anchors.centerIn: parent
+                                    text: parent.tagText
+                                    color: parent.tagColor
+                                    font.weight: Font.DemiBold
+                                    font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.92)
+                                }
+                            }
                         }
-                        color: parent.batColor
-                        font.weight: Font.DemiBold
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Kirigami.Units.smallSpacing
+
+                            Repeater {
+                                model: root.gfxSupported
+
+                                AnimeChip {
+                                    required property string modelData
+                                    readonly property bool isPending: root.gfxPendingMode !== "none"
+                                        && root.gfxPendingMode === modelData
+                                    label: root.gfxLabel(modelData)
+                                    accentColor: isPending ? Theme.amber : Theme.accent
+                                    pulsing: isPending
+                                    isActive: isPending || root.gfxMode === modelData
+                                    onClicked: {
+                                        if (modelData === root.gfxPendingMode) {
+                                            return
+                                        }
+                                        if (modelData === root.gfxMode) {
+                                            if (root.gfxPendingMode !== "none") {
+                                                root.cancelGfxPending()
+                                            }
+                                            return
+                                        }
+                                        root.gfxTarget = modelData
+                                    }
+                                }
+                            }
+                        }
+
+                        AnimeChip {
+                            id: applyChip
+                            property bool armed: false
+                            readonly property bool needsReboot: root.gfxPendingAction === "reboot"
+                            visible: root.gfxPendingMode !== "none" || root.gfxPendingAction !== "none"
+                            label: armed
+                                ? (needsReboot ? i18n("Click again to reboot") : i18n("Click again to log out"))
+                                : (needsReboot ? i18n("Reboot now to apply") : i18n("Log out now to apply"))
+                            accentColor: armed ? Theme.red : Theme.amber
+                            isActive: armed
+                            pulsing: armed
+                            onClicked: {
+                                if (armed) {
+                                    root.gfxPerformAction(root.gfxPendingAction)
+                                } else {
+                                    armed = true
+                                    applyArmTimer.restart()
+                                }
+                            }
+
+                            Timer {
+                                id: applyArmTimer
+                                interval: 4000
+                                onTriggered: applyChip.armed = false
+                            }
+                        }
+                    }
+
+                    SectionCard {
+                        Layout.fillHeight: true
+
+                        SectionHeader {
+                            title: i18n("ANIME MATRIX")
+                            animeGlyph: true
+                            animeAnimate: root.animeOn
+                            glyphColor: Theme.iconAnime
+                            active: root.animeDisplayOn
+
+                            RogSwitch {
+                                checked: root.animeOn
+                                onToggled: function(checked) { setAnimePower(checked) }
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: Kirigami.Units.smallSpacing
+                            enabled: root.animeOn
+                            opacity: root.animeOn ? 1.0 : Theme.offOpacity
+                            Behavior on opacity {
+                                NumberAnimation { duration: Theme.durSlow; easing.type: Theme.easeOut }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Kirigami.Units.smallSpacing
+
+                                AnimeChip {
+                                    label: i18n("Banner")
+                                    isActive: root.animeShape === "banner"
+                                    chipEnabled: root.animeOn
+                                    opacity: !root.animeOn ? Theme.offOpacity
+                                        : root.animeDisplayOn ? 1.0 : 0.55
+                                    Layout.fillWidth: true
+                                    onClicked: setAnimeShape("banner")
+                                }
+
+                                AnimeChip {
+                                    label: i18n("Logo")
+                                    isActive: root.animeShape === "logo"
+                                    chipEnabled: root.animeOn
+                                    opacity: !root.animeOn ? Theme.offOpacity
+                                        : root.animeDisplayOn ? 1.0 : 0.55
+                                    Layout.fillWidth: true
+                                    onClicked: setAnimeShape("logo")
+                                }
+
+                                AnimeChip {
+                                    label: i18n("Static")
+                                    isActive: root.animeShape === "static"
+                                    chipEnabled: root.animeOn
+                                    opacity: !root.animeOn ? Theme.offOpacity
+                                        : root.animeDisplayOn ? 1.0 : 0.55
+                                    Layout.fillWidth: true
+                                    onClicked: setAnimeShape("static")
+                                }
+                            }
+
+                            RogCheck {
+                                Layout.fillWidth: true
+                                text: i18n("Turn off on battery")
+                                checked: root.animeBatteryOff
+                                onToggled: function(checked) { setAnimeBatteryOff(checked) }
+                            }
+                        }
                     }
                 }
 
-                // live refresh-rate readout
-                Rectangle {
-                    Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
-                    Layout.preferredWidth: hzLabel.implicitWidth + Kirigami.Units.largeSpacing * 2
-                    radius: height / 2
-                    color: Theme.alpha(Theme.accent, 0.12)
-                    border.width: 1
-                    border.color: Theme.alpha(Theme.accent, 0.35)
+                SectionCard {
+                    Layout.fillWidth: false
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: fullRep.railWidth
+                    Layout.minimumWidth: fullRep.railWidth
+                    Layout.maximumWidth: fullRep.railWidth
 
-                    PC3.Label {
-                        id: hzLabel
-                        anchors.centerIn: parent
-                        text: i18n("%1 Hz", root.refreshCurrentHz)
-                        color: Theme.accentBright
-                        font.weight: Font.DemiBold
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    }
-                }
-            }
-
-            // ================= thermals =================
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing
-
-                TempPill {
-                    sensorLabel: i18n("CPU")
-                    temp: root.cpuTemp
-                    watts: root.cpuWatts
-                }
-
-                TempPill {
-                    sensorLabel: i18n("GPU")
-                    temp: root.gpuTemp
-                    watts: root.gpuWatts
-                }
-
-                // total system drain straight from the battery, the only
-                // number that truly covers CPU + GPU + everything else
-                Rectangle {
-                    id: drawPill
-                    visible: root.batteryState === "discharging" && root.batteryWatts >= 0
-                    readonly property color drainColor: root.batteryWatts >= 35 ? Theme.red
-                        : root.batteryWatts >= 20 ? Theme.amber
-                        : Theme.green
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.4)
-                    radius: height / 2
-                    color: Theme.alpha(drainColor, 0.10)
-                    border.width: 1
-                    border.color: Theme.alpha(drainColor, 0.3)
-                    Behavior on border.color { ColorAnimation { duration: Theme.durSlow } }
-
-                    RowLayout {
-                        anchors.centerIn: parent
-                        spacing: Kirigami.Units.smallSpacing
+                    SectionHeader {
+                        title: i18n("REFRESH RATE")
+                        iconSource: Qt.resolvedUrl("../images/hz.svg")
+                        glyphColor: Theme.iconRefresh
+                        active: true
 
                         PC3.Label {
-                            text: i18n("DRAW")
-                            color: Kirigami.Theme.disabledTextColor
+                            text: i18n("%1 Hz", root.refreshCurrentHz)
+                            color: Theme.accentBright
                             font.weight: Font.DemiBold
-                            font.letterSpacing: 1.2
-                            font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
-                        }
-
-                        PC3.Label {
-                            text: i18n("%1 W", root.batteryWatts)
-                            color: drawPill.drainColor
-                            font.weight: Font.Bold
                             font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                         }
                     }
-                }
-            }
 
-            // ================= profiles =================
-            GridLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: Kirigami.Units.smallSpacing
-                columns: 2
-                rowSpacing: Kirigami.Units.smallSpacing
-                columnSpacing: Kirigami.Units.smallSpacing
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
 
-                Repeater {
-                    model: root.profiles
+                        AnimeChip {
+                            label: i18n("Auto")
+                            isActive: root.refreshMode === "auto"
+                            onClicked: setRefreshMode("auto")
+                        }
 
-                    ProfileCard {
-                        required property string modelData
-                        profileName: dataFor(modelData).name
-                        profileDesc: dataFor(modelData).desc
-                        profileKind: root.glyphKind(modelData)
-                        accentColor: dataFor(modelData).accent
-                        burstEffect: dataFor(modelData).burst || "pulse"
-                        isActive: currentProfile === modelData
-                        onClicked: setProfile(modelData)
+                        AnimeChip {
+                            visible: root.refreshLowHz !== root.refreshHighHz
+                            label: i18n("%1 Hz", root.refreshLowHz)
+                            isActive: root.refreshMode === "low"
+                            onClicked: setRefreshMode("low")
+                        }
+
+                        AnimeChip {
+                            label: i18n("%1 Hz", root.refreshHighHz)
+                            isActive: root.refreshMode === "high"
+                            onClicked: setRefreshMode("high")
+                        }
                     }
                 }
-            }
 
-            // ================= graphics =================
-            SectionCard {
-                visible: root.gfxSupported.length > 0
+                SectionCard {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 16
 
-                SectionHeader {
-                    title: i18n("GRAPHICS")
-                    iconSource: Qt.resolvedUrl("../images/gpu.svg")
-                    glyphColor: Theme.iconGraphics
-                    active: true
-
-                    PC3.Label {
-                        visible: root.gfxPendingMode !== "none" || root.gfxPendingAction !== "none"
-                        text: {
-                            var act = root.gfxPendingAction === "reboot" ? i18n("reboot") : i18n("logout")
-                            return root.gfxPendingMode !== "none"
-                                ? i18n("%1 after %2", root.gfxLabel(root.gfxPendingMode), act)
-                                : i18n("Apply with %1", act)
-                        }
-                        color: Theme.amber
-                        font.weight: Font.DemiBold
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    }
-
-                    // which GPU devices are live right now: green/teal when
-                    // only the iGPU draws power, amber when the dGPU is awake
-                    Rectangle {
-                        readonly property color tagColor: root.gfxDgpu === "active" ? Theme.amber : Theme.teal
-                        readonly property string tagText: {
-                            if (root.gfxMode === "AsusMuxDgpu") return i18n("dGPU drives display")
-                            if (root.gfxDgpu === "off") return i18n("iGPU only")
-                            if (root.gfxDgpu === "active") return i18n("iGPU + dGPU on")
-                            return i18n("iGPU + dGPU asleep")
-                        }
-                        implicitWidth: tagLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
-                        implicitHeight: tagLabel.implicitHeight + Kirigami.Units.smallSpacing
-                        radius: height / 2
-                        color: Theme.alpha(tagColor, 0.14)
-                        border.width: 1
-                        border.color: Theme.alpha(tagColor, 0.45)
+                    SectionHeader {
+                        title: i18n("CHARGE LIMIT")
+                        iconSource: Qt.resolvedUrl("../images/charge.svg")
+                        glyphColor: Theme.iconCharge
+                        active: true
 
                         PC3.Label {
-                            id: tagLabel
-                            anchors.centerIn: parent
-                            text: parent.tagText
-                            color: parent.tagColor
+                            text: root.chargeLimit >= 100
+                                ? i18n("Full")
+                                : i18n("%1%", root.chargeLimit)
+                            color: root.chargeLimit >= 100 ? Theme.accentBright : Theme.green
                             font.weight: Font.DemiBold
-                            font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.92)
+                            font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                         }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        PC3.Label {
+                            text: i18n("80%")
+                            color: Kirigami.Theme.disabledTextColor
+                            font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        }
+
+                        PC3.Slider {
+                            Layout.fillWidth: true
+                            Kirigami.Theme.inherit: false
+                            Kirigami.Theme.highlightColor: Theme.accent
+                            from: 80
+                            to: 100
+                            stepSize: 5
+                            snapMode: PC3.Slider.SnapAlways
+                            value: root.chargeLimit < 80 ? 80 : root.chargeLimit
+                            onPressedChanged: root.chargeSliderPressed = pressed
+                            onMoved: setChargeLimit(Math.round(value))
+                        }
+
+                        PC3.Label {
+                            text: i18n("100%")
+                            color: Kirigami.Theme.disabledTextColor
+                            font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        }
+                    }
+
+                    AnimeChip {
+                        visible: root.chargeLimit < 100
+                        Layout.fillWidth: true
+                        label: i18n("Charge to 100% once")
+                        accentColor: Theme.amber
+                        onClicked: chargeOneshot()
+                    }
+                }
+
+                SectionCard {
+                    Layout.fillWidth: false
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: fullRep.railWidth
+                    Layout.minimumWidth: fullRep.railWidth
+                    Layout.maximumWidth: fullRep.railWidth
+
+                    SectionHeader {
+                        title: i18n("KEYBOARD")
+                        iconSource: Qt.resolvedUrl("../images/kbd.svg")
+                        glyphColor: Theme.iconKbd
+                        active: true
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        PC3.Label {
+                            text: i18n("Light")
+                            color: Kirigami.Theme.disabledTextColor
+                            font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        }
+
+                        PC3.Slider {
+                            id: kbdBriSlider
+                            Layout.fillWidth: true
+                            Kirigami.Theme.inherit: false
+                            Kirigami.Theme.highlightColor: Theme.accent
+                            from: 0
+                            to: 3
+                            stepSize: 1
+                            snapMode: PC3.Slider.SnapAlways
+                            value: root.kbdBrightness
+                            onPressedChanged: root.kbdSliderPressed = pressed
+                            onMoved: setKbdBrightness(Math.round(value))
+                        }
+
+                        PC3.Label {
+                            Layout.preferredWidth: Math.round(Kirigami.Units.gridUnit * 2)
+                            text: root.kbdBrightness === 0 ? i18n("Off")
+                                : root.kbdBrightness === 1 ? i18n("30%")
+                                : root.kbdBrightness === 2 ? i18n("60%")
+                                : i18n("100%")
+                            color: Kirigami.Theme.textColor
+                            font.weight: Font.DemiBold
+                            font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                            horizontalAlignment: Text.AlignRight
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        ProfileIconBadge {
+                            iconSource: Qt.resolvedUrl("../images/fn.svg")
+                            accentColor: Theme.accent
+                            glyphColor: root.fnLockOn ? Theme.iconFn : Theme.iconHeader
+                            badgeSize: Math.round(Kirigami.Units.gridUnit * 1.35)
+                            active: root.fnLockOn
+                            bare: true
+                        }
+
+                        PC3.Label {
+                            Layout.fillWidth: true
+                            text: i18n("FN-lock")
+                            color: Kirigami.Theme.textColor
+                            font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                            PC3.ToolTip.visible: fnLockHover.containsMouse
+                            PC3.ToolTip.delay: 400
+                            PC3.ToolTip.text: i18n("F-keys act as media keys")
+
+                            MouseArea {
+                                id: fnLockHover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                acceptedButtons: Qt.NoButton
+                            }
+                        }
+
+                        RogSwitch {
+                            checked: root.fnLockOn
+                            onToggled: function(checked) { setFnLock(checked) }
+                        }
+                    }
+                }
+
+                SectionCard {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 16
+
+                    SectionHeader {
+                        title: i18n("IDLE")
+                        iconSource: Qt.resolvedUrl("../images/kbd.svg")
+                        glyphColor: Theme.iconKbd
+                        active: root.kbdIdleOn
+
+                        RogSwitch {
+                            checked: root.kbdIdleOn
+                            onToggled: function(checked) { setKbdIdle(checked) }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+                        enabled: root.kbdIdleOn
+                        opacity: root.kbdIdleOn ? 1.0 : Theme.offOpacity
+                        Behavior on opacity {
+                            NumberAnimation { duration: Theme.durSlow; easing.type: Theme.easeOut }
+                        }
+
+                        PC3.Label {
+                            text: i18n("After")
+                            color: Kirigami.Theme.disabledTextColor
+                            font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        }
+
+                        PC3.SpinBox {
+                            Layout.preferredWidth: Math.round(Kirigami.Units.gridUnit * 5.5)
+                            from: 5
+                            to: 3600
+                            stepSize: 5
+                            editable: true
+                            value: root.kbdTimeout
+                            textFromValue: function(value, locale) {
+                                return i18n("%1 s", value)
+                            }
+                            valueFromText: function(text, locale) {
+                                var n = parseInt(text.replace(/[^0-9]/g, ""))
+                                return isNaN(n) ? root.kbdTimeout : n
+                            }
+                            onValueModified: setKbdTimeout(value)
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        RogCheck {
+                            text: i18n("Keep on AC")
+                            checked: root.kbdKeepAc
+                            onToggled: function(checked) { setKbdKeepAc(checked) }
+                        }
+                    }
+                }
+            }
+
+            PC3.Label {
+                Layout.fillWidth: true
+                Layout.leftMargin: fullRep.edgeMargin
+                Layout.rightMargin: fullRep.edgeMargin
+                Layout.bottomMargin: fullRep.edgeMargin
+                text: i18n("Scroll on the panel icon to cycle profiles")
+                color: Kirigami.Theme.disabledTextColor
+                font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
+                opacity: 0.5
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+            }
+        }
+
+            // Fan sheet sits beside the dashboard and slides in from the
+            // right (same side as the FANS chip). No fade, no layer.
+            Item {
+                id: fanOverlay
+                width: pageHost.width > 0 ? pageHost.width : fullRep.popupWidth
+                height: pageHost.height > 0 ? pageHost.height : body.implicitHeight
+                x: width * (1 - pageHost.pageShift)
+                y: 0
+                enabled: root.fanPanelOpen
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: {}
+                onWheel: function(wheel) { wheel.accepted = true }
+            }
+
+            Connections {
+                target: root
+                function onFanCurvesLoaded(cpu, gpu) {
+                    if (root.fanSliderPressed)
+                        return
+                    cpuStrip.setPoints(root.parseFanCurve(cpu))
+                    gpuStrip.setPoints(root.parseFanCurve(gpu))
+                }
+            }
+
+            ColumnLayout {
+                id: fanSheet
+                anchors.fill: parent
+                anchors.margins: fullRep.edgeMargin
+                spacing: Kirigami.Units.smallSpacing
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+
+                    AnimeChip {
+                        label: i18n("Back")
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 5
+                        Layout.fillWidth: false
+                        onClicked: root.closeFanPanel()
+                    }
+
+                    SectionHeader {
+                        title: i18n("FAN CURVES")
+                        iconSource: Qt.resolvedUrl("../images/fan.svg")
+                        glyphColor: Theme.iconFan
+                        active: true
+                        Layout.fillWidth: true
+
+                        Rectangle {
+                            implicitWidth: saveTagLabel.implicitWidth + Kirigami.Units.smallSpacing * 2.2
+                            implicitHeight: saveTagLabel.implicitHeight + Kirigami.Units.smallSpacing
+                            radius: height / 2
+                            color: Theme.alpha(root.fanSaveColor, 0.14)
+                            border.width: 1
+                            border.color: Theme.alpha(root.fanSaveColor, 0.50)
+
+                            PC3.Label {
+                                id: saveTagLabel
+                                anchors.centerIn: parent
+                                text: root.fanSaveLabel
+                                color: root.fanSaveColor
+                                font.weight: Font.DemiBold
+                                font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.92)
+                            }
+
+                            PC3.ToolTip.visible: saveTagHover.containsMouse
+                            PC3.ToolTip.delay: 400
+                            PC3.ToolTip.text: {
+                                if (root.fanSaveKind === "applied")
+                                    return i18n("This custom curve is stored and driving %1", root.dataFor(root.fanProfile).name)
+                                if (root.fanSaveKind === "saved")
+                                    return i18n("Stored on %1 — applies when you switch to that mode", root.dataFor(root.fanProfile).name)
+                                if (root.fanSaveKind === "unsaved")
+                                    return i18n("Edits are not stored on this mode yet")
+                                if (root.fanSaveKind === "saving")
+                                    return i18n("Writing the curve to this mode")
+                                return i18n("Firmware is controlling the fans — custom points stay stored on this mode")
+                            }
+
+                            MouseArea {
+                                id: saveTagHover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                acceptedButtons: Qt.NoButton
+                            }
+                        }
+                    }
+
+                    AnimeChip {
+                        label: i18n("Firmware")
+                        isActive: !root.fanCustom
+                        onClicked: root.setFanEnabled(false)
+                    }
+
+                    AnimeChip {
+                        label: i18n("Custom")
+                        isActive: root.fanCustom
+                        accentColor: Theme.iconFan
+                        onClicked: root.setFanEnabled(true)
                     }
                 }
 
@@ -936,370 +1893,181 @@ PlasmoidItem {
                     spacing: Kirigami.Units.smallSpacing
 
                     Repeater {
-                        model: root.gfxSupported
+                        model: root.profiles
 
                         AnimeChip {
                             required property string modelData
-                            // mode that becomes active after the reboot
-                            readonly property bool isPending: root.gfxPendingMode !== "none"
-                                && root.gfxPendingMode === modelData
-                            label: root.gfxLabel(modelData)
-                            // accent = active now, pulsing amber = after reboot
-                            accentColor: isPending ? Theme.amber : Theme.accent
-                            pulsing: isPending
-                            isActive: isPending || root.gfxMode === modelData
-                            onClicked: {
-                                if (modelData === root.gfxPendingMode) {
-                                    return
-                                }
-                                if (modelData === root.gfxMode) {
-                                    // clicking the live mode while a switch is
-                                    // queued un-queues it
-                                    if (root.gfxPendingMode !== "none") {
-                                        root.cancelGfxPending()
-                                    }
-                                    return
-                                }
-                                root.gfxTarget = modelData
+                            label: root.fanLabel(modelData)
+                            accentColor: root.dataFor(modelData).accent
+                            isActive: root.fanProfile === modelData
+                            onClicked: root.selectFanProfile(modelData)
+                        }
+                    }
+                }
+
+                PC3.Label {
+                    Layout.fillWidth: true
+                    text: i18n("Live %1 · CPU %2 · GPU %3",
+                        root.dataFor(root.fanActiveProfile).name,
+                        root.formatRpm(root.fanCpuRpm),
+                        root.formatRpm(root.fanGpuRpm))
+                    color: Kirigami.Theme.disabledTextColor
+                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                    elide: Text.ElideRight
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    spacing: Kirigami.Units.smallSpacing
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.preferredWidth: 1
+                        radius: Kirigami.Units.smallSpacing * 1.5
+                        color: Theme.alpha(Kirigami.Theme.textColor, 0.045)
+                        border.width: 1
+                        border.color: Theme.alpha(Theme.iconFan, root.fanCustom ? 0.22 : 0.08)
+
+                        Rectangle {
+                            anchors.top: parent.top
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            height: 2
+                            radius: 1
+                            color: Theme.alpha(Theme.iconFan, 0.55)
+                        }
+
+                        FanCurveStrip {
+                            id: cpuStrip
+                            anchors.fill: parent
+                            anchors.margins: Kirigami.Units.largeSpacing
+                            title: i18n("CPU")
+                            rpm: root.fanCpuRpm
+                            maxRpm: root.fanCpuMaxRpm
+                            liveTemp: root.cpuTemp
+                            interactive: !root.fanCalibrating
+                            firmwareMode: !root.fanCustom
+                            calibrating: root.fanCalibrating
+                            accent: Theme.iconFan
+                            onPressChanged: function(p) { root.fanSliderPressed = p }
+                            onPointsEdited: root.applyFanCurve("cpu", curveString())
+                            onCopyRequested: {
+                                gpuStrip.setPoints(root.parseFanCurve(curveString()))
+                                root.applyFanCurve("gpu", curveString())
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.preferredWidth: 1
+                        radius: Kirigami.Units.smallSpacing * 1.5
+                        color: Theme.alpha(Kirigami.Theme.textColor, 0.045)
+                        border.width: 1
+                        border.color: Theme.alpha(Theme.teal, root.fanCustom ? 0.22 : 0.08)
+
+                        Rectangle {
+                            anchors.top: parent.top
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            height: 2
+                            radius: 1
+                            color: Theme.alpha(Theme.teal, 0.55)
+                        }
+
+                        FanCurveStrip {
+                            id: gpuStrip
+                            anchors.fill: parent
+                            anchors.margins: Kirigami.Units.largeSpacing
+                            title: i18n("GPU")
+                            rpm: root.fanGpuRpm
+                            maxRpm: root.fanGpuMaxRpm
+                            liveTemp: root.gpuTemp
+                            interactive: !root.fanCalibrating
+                            firmwareMode: !root.fanCustom
+                            calibrating: root.fanCalibrating
+                            accent: Theme.teal
+                            onPressChanged: function(p) { root.fanSliderPressed = p }
+                            onPointsEdited: root.applyFanCurve("gpu", curveString())
+                            onCopyRequested: {
+                                cpuStrip.setPoints(root.parseFanCurve(curveString()))
+                                root.applyFanCurve("cpu", curveString())
                             }
                         }
                     }
                 }
 
-                // one-click apply with an arm step so a stray click is harmless
-                AnimeChip {
-                    id: applyChip
-                    property bool armed: false
-                    readonly property bool needsReboot: root.gfxPendingAction === "reboot"
-                    visible: root.gfxPendingMode !== "none" || root.gfxPendingAction !== "none"
-                    label: armed
-                        ? (needsReboot ? i18n("Click again to reboot") : i18n("Click again to log out"))
-                        : (needsReboot ? i18n("Reboot now to apply") : i18n("Log out now to apply"))
-                    accentColor: armed ? Theme.red : Theme.amber
-                    isActive: armed
-                    pulsing: armed
-                    onClicked: {
-                        if (armed) {
-                            root.gfxPerformAction(root.gfxPendingAction)
-                        } else {
-                            armed = true
-                            applyArmTimer.restart()
-                        }
-                    }
-
-                    Timer {
-                        id: applyArmTimer
-                        interval: 4000
-                        onTriggered: applyChip.armed = false
-                    }
-                }
-            }
-
-            // ================= AniMe Matrix =================
-            SectionCard {
-                SectionHeader {
-                    title: i18n("ANIME MATRIX")
-                    animeGlyph: true
-                    animeAnimate: root.animeOn
-                    glyphColor: Theme.iconAnime
-                    active: root.animeDisplayOn
-
-                    RogSwitch {
-                        checked: root.animeOn
-                        onToggled: function(checked) { setAnimePower(checked) }
-                    }
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing
-                    enabled: root.animeOn
-                    opacity: root.animeOn ? 1.0 : Theme.offOpacity
-                    Behavior on opacity {
-                        NumberAnimation { duration: Theme.durSlow; easing.type: Theme.easeOut }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing
-
-                        AnimeChip {
-                            label: i18n("Banner")
-                            isActive: root.animeShape === "banner"
-                            chipEnabled: root.animeOn
-                            // dimmed but still selected while the display is
-                            // suspended on battery power
-                            opacity: !root.animeOn ? Theme.offOpacity
-                                : root.animeDisplayOn ? 1.0 : 0.55
-                            onClicked: setAnimeShape("banner")
-                        }
-
-                        AnimeChip {
-                            label: i18n("Logo")
-                            isActive: root.animeShape === "logo"
-                            chipEnabled: root.animeOn
-                            opacity: !root.animeOn ? Theme.offOpacity
-                                : root.animeDisplayOn ? 1.0 : 0.55
-                            onClicked: setAnimeShape("logo")
-                        }
-                    }
-
-                    RogCheck {
-                        Layout.fillWidth: true
-                        text: i18n("Turn off on battery")
-                        checked: root.animeBatteryOff
-                        onToggled: function(checked) { setAnimeBatteryOff(checked) }
-                    }
-                }
-            }
-
-            // ================= keyboard =================
-            SectionCard {
-                SectionHeader {
-                    title: i18n("KEYBOARD BACKLIGHT")
-                    iconSource: Qt.resolvedUrl("../images/kbd.svg")
-                    glyphColor: Theme.iconKbd
-                    active: true
-                }
-
-                // brightness
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: Kirigami.Units.smallSpacing
 
-                    PC3.Label {
-                        text: i18n("Brightness")
-                        color: Kirigami.Theme.disabledTextColor
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    }
-
-                    PC3.Slider {
-                        id: kbdBriSlider
-                        Layout.fillWidth: true
-                        Kirigami.Theme.inherit: false
-                        Kirigami.Theme.highlightColor: Theme.accent
-                        from: 0
-                        to: 3
-                        stepSize: 1
-                        snapMode: PC3.Slider.SnapAlways
-                        value: root.kbdBrightness
-                        onPressedChanged: root.kbdSliderPressed = pressed
-                        onMoved: setKbdBrightness(Math.round(value))
-                    }
-
-                    PC3.Label {
-                        Layout.preferredWidth: Math.round(Kirigami.Units.gridUnit * 2)
-                        text: root.kbdBrightness === 0 ? i18n("Off")
-                            : root.kbdBrightness === 1 ? i18n("30%")
-                            : root.kbdBrightness === 2 ? i18n("60%")
-                            : i18n("100%")
-                        color: Kirigami.Theme.textColor
-                        font.weight: Font.DemiBold
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                        horizontalAlignment: Text.AlignRight
-                    }
-                }
-
-                // idle timer toggle
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing
-
-                    PC3.Label {
-                        Layout.fillWidth: true
-                        text: i18n("Turn off when idle")
-                        color: Kirigami.Theme.textColor
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                        elide: Text.ElideRight
-                    }
-
-                    RogSwitch {
-                        checked: root.kbdIdleOn
-                        onToggled: function(checked) { setKbdIdle(checked) }
-                    }
-                }
-
-                // idle timer details
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing
-                    enabled: root.kbdIdleOn
-                    opacity: root.kbdIdleOn ? 1.0 : Theme.offOpacity
-                    Behavior on opacity {
-                        NumberAnimation { duration: Theme.durSlow; easing.type: Theme.easeOut }
-                    }
-
-                    PC3.Label {
-                        text: i18n("After")
-                        color: Kirigami.Theme.disabledTextColor
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    }
-
-                    PC3.SpinBox {
-                        Layout.preferredWidth: Math.round(Kirigami.Units.gridUnit * 5.5)
-                        from: 5
-                        to: 3600
-                        stepSize: 5
-                        editable: true
-                        value: root.kbdTimeout
-                        textFromValue: function(value, locale) {
-                            return i18n("%1 s", value)
+                    AnimeChip {
+                        label: i18n("−5%")
+                        Layout.fillWidth: false
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 4
+                        onClicked: {
+                            root.fanCustom = true
+                            root.fanWriteHold.restart()
+                            cpuStrip.bumpAll(-5)
+                            gpuStrip.bumpAll(-5)
                         }
-                        valueFromText: function(text, locale) {
-                            var n = parseInt(text.replace(/[^0-9]/g, ""))
-                            return isNaN(n) ? root.kbdTimeout : n
+                    }
+
+                    AnimeChip {
+                        label: i18n("+5%")
+                        Layout.fillWidth: false
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 4
+                        onClicked: {
+                            root.fanCustom = true
+                            root.fanWriteHold.restart()
+                            cpuStrip.bumpAll(5)
+                            gpuStrip.bumpAll(5)
                         }
-                        onValueModified: setKbdTimeout(value)
                     }
 
                     Item { Layout.fillWidth: true }
 
-                    RogCheck {
-                        Layout.rightMargin: Kirigami.Units.smallSpacing
-                        text: i18n("Keep on AC")
-                        checked: root.kbdKeepAc
-                        onToggled: function(checked) { setKbdKeepAc(checked) }
-                    }
-                }
-
-                // FN-lock
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.topMargin: Kirigami.Units.smallSpacing * 0.5
-                    spacing: Kirigami.Units.smallSpacing
-
-                    ProfileIconBadge {
-                        iconSource: Qt.resolvedUrl("../images/fn.svg")
-                        accentColor: Theme.accent
-                        glyphColor: root.fnLockOn ? Theme.iconFn : Theme.iconHeader
-                        badgeSize: Math.round(Kirigami.Units.gridUnit * 1.45)
-                        active: root.fnLockOn
-                        bare: true
-                    }
-
-                    PC3.Label {
-                        Layout.fillWidth: true
-                        text: i18n("FN-lock — F-keys act as media keys")
-                        color: Kirigami.Theme.textColor
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                        elide: Text.ElideRight
-                    }
-
-                    RogSwitch {
-                        checked: root.fnLockOn
-                        onToggled: function(checked) { setFnLock(checked) }
-                    }
-                }
-            }
-
-            // ================= refresh rate =================
-            SectionCard {
-                SectionHeader {
-                    title: i18n("REFRESH RATE")
-                    iconSource: Qt.resolvedUrl("../images/hz.svg")
-                    glyphColor: Theme.iconRefresh
-                    active: true
-
-                    PC3.Label {
-                        text: i18n("%1 Hz", root.refreshCurrentHz)
-                        color: Theme.accentBright
-                        font.weight: Font.DemiBold
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing
-
                     AnimeChip {
-                        label: i18n("Auto")
-                        isActive: root.refreshMode === "auto"
-                        onClicked: setRefreshMode("auto")
+                        label: i18n("Quiet")
+                        onClicked: root.fanPreset("quiet")
                     }
 
                     AnimeChip {
-                        // Hidden on panels with a single refresh rate.
-                        visible: root.refreshLowHz !== root.refreshHighHz
-                        label: i18n("%1 Hz", root.refreshLowHz)
-                        isActive: root.refreshMode === "low"
-                        onClicked: setRefreshMode("low")
+                        label: i18n("Stock")
+                        onClicked: root.fanPreset("stock")
                     }
 
                     AnimeChip {
-                        label: i18n("%1 Hz", root.refreshHighHz)
-                        isActive: root.refreshMode === "high"
-                        onClicked: setRefreshMode("high")
+                        label: i18n("Cool")
+                        onClicked: root.fanPreset("cool")
                     }
-                }
-            }
 
-            // ================= battery =================
-            SectionCard {
-                SectionHeader {
-                    title: i18n("CHARGE LIMIT")
-                    iconSource: Qt.resolvedUrl("../images/charge.svg")
-                    glyphColor: Theme.iconCharge
-                    active: true
-
-                    PC3.Label {
-                        text: root.chargeLimit >= 100
-                            ? i18n("Full")
-                            : i18n("%1%", root.chargeLimit)
-                        color: root.chargeLimit >= 100 ? Theme.accentBright : Theme.green
-                        font.weight: Font.DemiBold
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                    AnimeChip {
+                        label: root.fanCalibrating ? i18n("Measuring…") : i18n("Calibrate")
+                        accentColor: Theme.iconFan
+                        isActive: root.fanCalibrating
+                        pulsing: root.fanCalibrating
+                        chipEnabled: !root.fanCalibrating
+                        Layout.fillWidth: false
+                        onClicked: root.startFanCalibrate()
                     }
                 }
 
-                RowLayout {
+                PC3.Label {
                     Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing
-
-                    PC3.Label {
-                        text: i18n("80%")
-                        color: Kirigami.Theme.disabledTextColor
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    }
-
-                    PC3.Slider {
-                        Layout.fillWidth: true
-                        Kirigami.Theme.inherit: false
-                        Kirigami.Theme.highlightColor: Theme.accent
-                        from: 80
-                        to: 100
-                        stepSize: 5
-                        snapMode: PC3.Slider.SnapAlways
-                        value: root.chargeLimit < 80 ? 80 : root.chargeLimit
-                        onPressedChanged: root.chargeSliderPressed = pressed
-                        onMoved: setChargeLimit(Math.round(value))
-                    }
-
-                    PC3.Label {
-                        text: i18n("100%")
-                        color: Kirigami.Theme.disabledTextColor
-                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    }
-                }
-
-                AnimeChip {
-                    visible: root.chargeLimit < 100
-                    label: i18n("Charge to 100% once")
-                    accentColor: Theme.amber
-                    onClicked: chargeOneshot()
+                    text: root.fanCalibrating
+                        ? i18n("Fans at 100% while peak RPM is recorded. Your curve is restored afterwards.")
+                        : i18n("Each power mode has its own curve — switching profiles applies that mode. Drag a bar or scroll it for speed; click or scroll a °C to change that point. Calibrate measures max RPM (CPU %1 · GPU %2).",
+                            root.fanCpuMaxRpm, root.fanGpuMaxRpm)
+                    color: Kirigami.Theme.disabledTextColor
+                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
+                    wrapMode: Text.WordWrap
+                    opacity: 0.65
                 }
             }
-
-            // ================= footer =================
-            PC3.Label {
-                Layout.fillWidth: true
-                Layout.topMargin: Kirigami.Units.smallSpacing
-                text: i18n("Scroll on the panel icon to cycle profiles")
-                color: Kirigami.Theme.disabledTextColor
-                font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
-                opacity: 0.5
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
             }
         }
 
@@ -1320,7 +2088,8 @@ PlasmoidItem {
 
             Rectangle {
                 anchors.centerIn: parent
-                width: parent.width - Kirigami.Units.largeSpacing * 2
+                width: Math.min(Kirigami.Units.gridUnit * 22,
+                                parent.width - Kirigami.Units.largeSpacing * 2)
                 height: confirmColumn.implicitHeight + Kirigami.Units.largeSpacing * 4
                 radius: Kirigami.Units.smallSpacing * 2
                 color: Kirigami.Theme.backgroundColor
@@ -1411,6 +2180,10 @@ PlasmoidItem {
     }
 
     Component.onCompleted: {
+        if (Plasmoid.configuration.fanCpuMaxRpm >= 2000)
+            fanCpuMaxRpm = Plasmoid.configuration.fanCpuMaxRpm
+        if (Plasmoid.configuration.fanGpuMaxRpm >= 2000)
+            fanGpuMaxRpm = Plasmoid.configuration.fanGpuMaxRpm
         refreshProfile()
         refreshTimer.start()
     }

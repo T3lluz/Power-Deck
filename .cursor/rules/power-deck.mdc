@@ -1,0 +1,67 @@
+---
+description: Power Deck project conventions — AniMe Matrix, install, ASUS ROG
+alwaysApply: true
+---
+
+# Power Deck
+
+KDE Plasma 6 widget + scripts for ASUS ROG laptops (tested: Zephyrus G14 GA402NV).
+
+## AniMe Matrix shapes
+
+Three awake shapes (`~/.local/state/anime-shape`), controlled by `scripts/anime-ctl`:
+
+| Shape id | UI label | Mechanism |
+|----------|----------|-----------|
+| `banner` | Banner | Firmware builtin `BinaryBannerScroll` |
+| `logo` | Logo | Firmware builtin `RogLogoGlitch` (animated) |
+| `static` | Static | powersave off + `asusctl anime image` (upright ROG eye) |
+
+Awake firmware builtins are **only** `BinaryBannerScroll` and `RogLogoGlitch`. There is no static-logo builtin.
+
+### Static ROG logo
+
+- **Logo** = firmware `RogLogoGlitch` (animated)
+- **Static** = upright ROG Fearless Eye via `asusctl anime image` (same projector as GHelper Picture)
+- GHelper ships **no** Logo PNG; do not use ASUS gallery `ROG_glitch_still` (wordmark)
+- Apply Static:
+  1. `enable-powersave-anim false` (also turns device display off)
+  2. `enable-display true`
+  3. `image --path … --scale 1.25 --x-pos 0 --y-pos -0.8 --bright 1.0`
+  4. `enable-display true` last
+- Asset: `data/anime/rog-logo-static.png` — upright greyscale (not 74×39 pixel-image)
+- Tune scale/x-pos/y-pos in `apply_static` to match Logo placement on lid
+- After Static, Banner/Logo need `enable-powersave-anim true` — `set-builtins --set true` alone does not flip `builtin_anims_enabled`
+
+## Install / one-liner
+
+- Entry: `install.sh` (GitHub: `curl …/install.sh | bash`)
+- New scripts → add to install loop **and** uninstall `rm` list
+- New shared assets → install under `~/.local/share/power-deck/` and remove on uninstall
+- Widget images/QML ship via `kpackagetool6`; no separate manifest
+- After QML/script changes locally: `./install.sh` then restart plasmashell if needed
+
+## Layout notes
+
+- AniMe shape chips: one `RowLayout` with three equal `AnimeChip`s (Banner / Logo / Static)
+- Backend status line: `pref shape battery display` (shape may be `banner|logo|static`)
+- Dashboard is one 2-column `GridLayout` with a shared `railWidth`: left = Profiles over Refresh, right = Graphics+AniMe over Charge, Keyboard spans both. Same column edges on every row.
+- Temp pills are content-sized (never `Layout.fillWidth`).
+- `SectionCard` height is content-driven. Never `anchors.fill` its inner column, and never put `Layout.preferredHeight: 1` on a `fillHeight` row — that collapses the popup and cards overlap.
+
+## Fan curves
+
+- Reference: https://github.com/utajum/g-helper-linux (see repo `AGENTS.md`)
+- Use `scripts/fan-ctl` → D-Bus `xyz.ljones.FanCurves` on `/xyz/ljones`
+  (`SetFanCurve` then `SetFanCurvesEnabled`). Never write
+  `asus_custom_fan_curve` sysfs (root-only; asusd owns it).
+- Four Power Deck modes, each with its own store under
+  `~/.local/state/power-deck-fans/`. Extreme + Power Saver share the
+  LowPower firmware slot — `fan-ctl apply <mode>` writes the active
+  copy. Quiet CLI does not apply on this G14 (live id is 3).
+- 8 points, duty on the bars, temps editable under each bar.
+  Enable = custom, disable = firmware. Saved tag = stored and (if live) applied.
+- Keep asusd `ChangePlatformProfileOnAc/Battery` false so AC plug-in
+  cannot overwrite the chosen mode’s curve. Restore reapplies at login.
+- Calibration: `fan-ctl calibrate` (100% → peak RPM → restore store).
+  Cosmetic max RPM for the UI; GA402 defaults 5500 / 5600.

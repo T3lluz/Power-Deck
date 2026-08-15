@@ -1,14 +1,42 @@
 #!/bin/bash
-# Re-apply saved widget settings at login (power profile extras + Fn lock).
+# Re-apply saved widget settings at login (power profile extras, fans, Fn lock).
 # AniMe Matrix settings persist via asusd; keyboard idle service persists
-# via systemd enable; PPD profile persists on its own.
+# via systemd enable; PPD profile persists on its own — but asusd may
+# still race the platform profile and fan curve, so we re-assert both.
 
-sleep 3
+FAN_CTL="$HOME/.local/bin/fan-ctl"
+[ -x "$FAN_CTL" ] || FAN_CTL="$(dirname "$0")/fan-ctl"
+REFRESH_CTL="$HOME/.local/bin/refresh-ctl"
+[ -x "$REFRESH_CTL" ] || REFRESH_CTL="$(dirname "$0")/refresh-ctl"
+PROFILE_CTL="$HOME/.local/bin/ghelper-profile"
+[ -x "$PROFILE_CTL" ] || PROFILE_CTL="$(dirname "$0")/ghelper-profile"
+BUSCTL="${BUSCTL:-/usr/bin/busctl}"
+
+# Stop asusd from switching to Performance on AC before we restore.
+if [ -x "$BUSCTL" ]; then
+    "$BUSCTL" set-property xyz.ljones.Asusd /xyz/ljones xyz.ljones.Platform \
+        ChangePlatformProfileOnAc b false >/dev/null 2>&1 || true
+    "$BUSCTL" set-property xyz.ljones.Asusd /xyz/ljones xyz.ljones.Platform \
+        ChangePlatformProfileOnBattery b false >/dev/null 2>&1 || true
+fi
+
+# PPD and asusd are not always ready the instant the session starts.
+for _ in 1 2 3 4 5; do
+    if powerprofilesctl get >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+sleep 2
 
 mode=$(cat "$HOME/.local/state/ghelper-profile-mode" 2>/dev/null)
 case "$mode" in
     extreme|power|balanced|performance)
-        "$HOME/.local/bin/ghelper-profile" "$mode"
+        "$PROFILE_CTL" "$mode"
+        ;;
+    *)
+        [ -x "$FAN_CTL" ] && "$FAN_CTL" apply >/dev/null 2>&1 || true
         ;;
 esac
 
@@ -19,13 +47,14 @@ esac
 # seconds AFTER login — which can clobber the rate we just set (e.g.
 # leaving "auto" stuck at 60 Hz even while charging). The profile switch
 # above already synced once; re-sync a few more times to win that race
-# without blocking the rest of restore.
-REFRESH_CTL="$HOME/.local/bin/refresh-ctl"
-if [ -x "$REFRESH_CTL" ]; then
+# without blocking the rest of restore. Same for fans: asusd can finish
+# applying its own curve after our first write.
+if [ -x "$REFRESH_CTL" ] || [ -x "$FAN_CTL" ]; then
     (
         for delay in 4 6 8; do
             sleep "$delay"
-            "$REFRESH_CTL" sync >/dev/null 2>&1
+            [ -x "$REFRESH_CTL" ] && "$REFRESH_CTL" sync >/dev/null 2>&1
+            [ -x "$FAN_CTL" ] && "$FAN_CTL" apply ${mode:+"$mode"} >/dev/null 2>&1
         done
     ) &
 fi

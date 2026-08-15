@@ -90,10 +90,13 @@ Item {
     PC3.Label {
         id: labelText
         anchors.centerIn: parent
+        width: Math.max(0, parent.width - Kirigami.Units.smallSpacing)
         text: root.label
         color: root.isActive ? root.accentColor : Kirigami.Theme.textColor
         font.weight: root.isActive ? Font.DemiBold : Font.Medium
         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
         Behavior on color { ColorAnimation { duration: Theme.durFast } }
     }
 

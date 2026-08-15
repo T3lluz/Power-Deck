@@ -1,16 +1,46 @@
 #!/bin/bash
 # anime-ctl - AniMe Matrix control for the Plasma profile widget
-# Usage: anime-ctl [on|off|banner|logo|battery-off <on|off>|sync|status]
+# Usage: anime-ctl [on|off|banner|logo|static|battery-off <on|off>|sync|status]
+#
+# Shapes:
+#   banner  — firmware builtin BinaryBannerScroll
+#   logo    — firmware builtin RogLogoGlitch (animated)
+#   static  — still ROG eye via asusctl anime image (upright PNG)
 
 STATE_DIR="$HOME/.local/state"
 POWER_FILE="$STATE_DIR/anime-power"
 SHAPE_FILE="$STATE_DIR/anime-shape"
 ASUSD_ANIME_CONF="/etc/asusd/anime.ron"
+SHARE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/power-deck"
+STATIC_LOGO="$SHARE_DIR/anime/rog-logo-static.png"
 mkdir -p "$STATE_DIR"
 
 BOOT_ANIM="GlitchConstruction"
 SLEEP_ANIM="BannerSwipe"
 SHUTDOWN_ANIM="GlitchOut"
+
+normalize_shape() {
+    case "$1" in
+        banner|logo|static) echo "$1" ;;
+        *) echo banner ;;
+    esac
+}
+
+resolve_static_logo() {
+    if [ -f "$STATIC_LOGO" ]; then
+        echo "$STATIC_LOGO"
+        return 0
+    fi
+    local here repo
+    here=$(cd "$(dirname "$0")" && pwd)
+    for repo in "$here/.." "$here/../.."; do
+        if [ -f "$repo/data/anime/rog-logo-static.png" ]; then
+            echo "$repo/data/anime/rog-logo-static.png"
+            return 0
+        fi
+    done
+    return 1
+}
 
 on_ac() {
     local ps
@@ -27,18 +57,50 @@ anime_bool() {
     grep -q "${1}: true" "$ASUSD_ANIME_CONF" 2>/dev/null
 }
 
+# Select a firmware awake builtin and ensure powersave anims are enabled.
+# `set-builtins --set true` alone does not flip builtin_anims_enabled in
+# anime.ron — if it was left false (e.g. by Static), the panel stays
+# dark/stuck until powersave is re-enabled.
 apply_shape() {
-    local awake="BinaryBannerScroll"
-    [ "$1" = "logo" ] && awake="RogLogoGlitch"
+    local shape awake
+    shape=$(normalize_shape "$1")
+    if [ "$shape" = "static" ]; then
+        apply_static
+        return
+    fi
+    awake="BinaryBannerScroll"
+    [ "$shape" = "logo" ] && awake="RogLogoGlitch"
     asusctl anime set-builtins \
         --boot "$BOOT_ANIM" --awake "$awake" \
         --sleep "$SLEEP_ANIM" --shutdown "$SHUTDOWN_ANIM" --set true
-    echo "$1" > "$SHAPE_FILE"
+    asusctl anime --enable-powersave-anim true
+    asusctl anime --enable-display true
+    echo "$shape" > "$SHAPE_FILE"
+}
+
+# Still ROG eye (same mark as firmware Logo, frozen). Powersave must be off
+# for a custom image to stick; end with enable-display true — do not leave
+# powersave-false as the last asusctl call.
+#
+# Uses `image` (GHelper Picture path): upright greyscale PNG projected onto
+# the GA402 diagonal LED grid. scale/y-pos tuned to sit like RogLogoGlitch.
+apply_static() {
+    local logo
+    logo=$(resolve_static_logo) || {
+        echo "anime-ctl: missing static asset (expected $STATIC_LOGO)" >&2
+        return 1
+    }
+    asusctl anime --enable-powersave-anim false
+    asusctl anime --enable-display true
+    asusctl anime image --path "$logo" \
+        --scale 1.25 --x-pos 0.0 --y-pos -0.8 --angle 0.0 --bright 1.0
+    asusctl anime --enable-display true
+    echo static > "$SHAPE_FILE"
 }
 
 # Bring the physical display in line with: user preference AND power source.
-# Idempotent: only calls asusctl when the state actually needs to change,
-# so it is safe to run repeatedly (timer/watcher) without restarting anims.
+# Idempotent for on/off; static images are one-shot and must be re-pushed
+# whenever the display is turned back on.
 sync_display() {
     local pref desired current shape
     # Default to off when no preference has been saved yet.
@@ -52,13 +114,20 @@ sync_display() {
         desired=false
     fi
 
+    shape=$(normalize_shape "$(cat "$SHAPE_FILE" 2>/dev/null)")
     if anime_bool display_enabled; then current=true; else current=false; fi
-    [ "$desired" = "$current" ] && return 0
+
+    if [ "$desired" = "$current" ]; then
+        # Custom pixel-images are not persisted by asusd across sessions /
+        # enable cycles. Re-push whenever sync runs while static is selected.
+        if [ "$desired" = "true" ] && [ "$shape" = "static" ]; then
+            apply_static
+        fi
+        return 0
+    fi
 
     asusctl anime --enable-display "$desired"
     if [ "$desired" = "true" ]; then
-        shape=$(cat "$SHAPE_FILE" 2>/dev/null)
-        [ "$shape" = "logo" ] || shape="banner"
         apply_shape "$shape"
     fi
 }
@@ -73,8 +142,7 @@ case "$1" in
             asusctl anime --enable-display false
         else
             asusctl anime --enable-display true
-            shape=$(cat "$SHAPE_FILE" 2>/dev/null)
-            [ "$shape" = "logo" ] || shape="banner"
+            shape=$(normalize_shape "$(cat "$SHAPE_FILE" 2>/dev/null)")
             apply_shape "$shape"
         fi
         ;;
@@ -82,7 +150,7 @@ case "$1" in
         echo off > "$POWER_FILE"
         asusctl anime --enable-display false
         ;;
-    banner|logo)
+    banner|logo|static)
         echo "$1" > "$SHAPE_FILE"
         # Apply immediately if the display is currently lit; otherwise the
         # shape is picked up the next time sync turns the display on.
@@ -99,8 +167,7 @@ case "$1" in
         sync_display
         ;;
     status)
-        shape=$(cat "$SHAPE_FILE" 2>/dev/null)
-        [ "$shape" = "logo" ] || shape="banner"
+        shape=$(normalize_shape "$(cat "$SHAPE_FILE" 2>/dev/null)")
         pref=$(cat "$POWER_FILE" 2>/dev/null)
         [ "$pref" = "on" ] || pref="off"
         if anime_bool off_when_unplugged; then
@@ -116,7 +183,7 @@ case "$1" in
         echo "$pref $shape $battery $display"
         ;;
     *)
-        echo "Usage: $0 [on|off|banner|logo|battery-off <on|off>|sync|status]"
+        echo "Usage: $0 [on|off|banner|logo|static|battery-off <on|off>|sync|status]"
         exit 1
         ;;
 esac

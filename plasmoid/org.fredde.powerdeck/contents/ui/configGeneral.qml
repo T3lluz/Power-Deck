@@ -11,6 +11,8 @@ KCM.SimpleKCM {
     property alias cfg_showNotifications: notifyCheck.checked
     property alias cfg_monochrome: monoCheck.checked
     property int cfg_monoAccent
+    property int cfg_fanCpuMaxRpm
+    property int cfg_fanGpuMaxRpm
 
     // Mirrors Theme.monoAccents — kept here so the config page has no
     // dependency on the running widget's singleton.
@@ -102,6 +104,44 @@ KCM.SimpleKCM {
             Layout.fillWidth: true
             visible: monoCheck.checked
             text: i18n("Pick White for a fully neutral monochrome look, or a hue to tint the active controls, profile icon and panel glyph.")
+            color: Kirigami.Theme.disabledTextColor
+            font: Kirigami.Theme.smallFont
+            wrapMode: Text.WordWrap
+        }
+
+        QQC2.SpinBox {
+            id: cpuMaxBox
+            Kirigami.FormData.label: i18n("CPU fan max:")
+            from: 2000
+            to: 10000
+            stepSize: 100
+            value: root.cfg_fanCpuMaxRpm
+            onValueModified: root.cfg_fanCpuMaxRpm = value
+            textFromValue: function(value, locale) { return i18n("%1 RPM", value) }
+            valueFromText: function(text, locale) {
+                var n = parseInt(text.replace(/[^0-9]/g, ""), 10)
+                return isNaN(n) ? root.cfg_fanCpuMaxRpm : n
+            }
+        }
+
+        QQC2.SpinBox {
+            id: gpuMaxBox
+            Kirigami.FormData.label: i18n("GPU fan max:")
+            from: 2000
+            to: 10000
+            stepSize: 100
+            value: root.cfg_fanGpuMaxRpm
+            onValueModified: root.cfg_fanGpuMaxRpm = value
+            textFromValue: function(value, locale) { return i18n("%1 RPM", value) }
+            valueFromText: function(text, locale) {
+                var n = parseInt(text.replace(/[^0-9]/g, ""), 10)
+                return isNaN(n) ? root.cfg_fanGpuMaxRpm : n
+            }
+        }
+
+        QQC2.Label {
+            Layout.fillWidth: true
+            text: i18n("Used to show live speed as a percent of max. Or tap Calibrate on the Fans page — that runs both fans at 100% until the peak holds, records it, then puts your curve back.")
             color: Kirigami.Theme.disabledTextColor
             font: Kirigami.Theme.smallFont
             wrapMode: Text.WordWrap

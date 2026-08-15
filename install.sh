@@ -89,7 +89,11 @@ if [ "$ACTION" = "uninstall" ]; then
     fi
 
     step "Helper scripts"
-    rm -f "${BIN_DIR}"/{ghelper-profile,anime-ctl,anime-power-watch,kbd-idle-ctl,kbd-idle-helper,fnlock-ctl,fnlock-daemon.py,ghelper-restore,refresh-ctl,temp-ctl,charge-ctl,battery-ctl,gfx-ctl}
+    rm -f "${BIN_DIR}"/{ghelper-profile,anime-ctl,anime-power-watch,kbd-idle-ctl,kbd-idle-helper,fnlock-ctl,fnlock-daemon.py,ghelper-restore,refresh-ctl,temp-ctl,charge-ctl,battery-ctl,gfx-ctl,fan-ctl}
+    ok
+
+    step "Shared data (AniMe assets)"
+    rm -rf "${HOME}/.local/share/power-deck"
     ok
 
     step "Systemd user services"
@@ -102,7 +106,8 @@ if [ "$ACTION" = "uninstall" ]; then
     ok
 
     step "Saved state"
-    rm -f "${HOME}/.local/state"/{anime-power,anime-shape,ghelper-profile-mode,fnlock,refresh-auto,refresh-mode}
+    rm -f "${HOME}/.local/state"/{anime-power,anime-shape,ghelper-profile-mode,fnlock,refresh-auto,refresh-mode,power-deck-fan-cal}
+    rm -rf "${HOME}/.local/state/power-deck-fans"
     ok
 
     section "Root helper"
@@ -197,7 +202,7 @@ recommend() {
 require kpackagetool6
 require systemctl
 recommend powerprofilesctl "power profile switching will not work"
-recommend asusctl          "AniMe Matrix controls will not work"
+recommend asusctl          "AniMe, charge limit, and fan curves will not work"
 recommend brightnessctl    "keyboard backlight controls will not work"
 recommend swayidle         "keyboard idle timer will not work"
 recommend udevadm          "AniMe AC sync falls back to polling"
@@ -223,9 +228,15 @@ mkdir -p "$BIN_DIR" "$SYSTEMD_USER_DIR" "${HOME}/.local/state" \
 step "Helper scripts -> ~/.local/bin"
 for script in ghelper-profile anime-ctl anime-power-watch kbd-idle-ctl \
     kbd-idle-helper fnlock-ctl fnlock-daemon.py ghelper-restore refresh-ctl \
-    temp-ctl charge-ctl battery-ctl gfx-ctl; do
+    temp-ctl charge-ctl battery-ctl gfx-ctl fan-ctl; do
     install -m 755 "${REPO_ROOT}/scripts/${script}" "${BIN_DIR}/${script}"
 done
+ok
+
+step "AniMe Matrix assets -> ~/.local/share/power-deck/anime"
+mkdir -p "${HOME}/.local/share/power-deck/anime"
+install -m 644 "${REPO_ROOT}/data/anime/rog-logo-static.png" \
+    "${HOME}/.local/share/power-deck/anime/rog-logo-static.png"
 ok
 
 step "Default config (kbd-idle.conf)"
@@ -262,22 +273,37 @@ ok
 # ---------- defaults ----------
 section "Applying defaults"
 
-step "Fn-lock off"
-echo off > "${HOME}/.local/state/fnlock"
-ok
+step "Fn-lock default (off)"
+if [ -f "${HOME}/.local/state/fnlock" ]; then
+    skipped
+else
+    echo off > "${HOME}/.local/state/fnlock"
+    ok
+fi
 
-step "AniMe Matrix off"
-echo off > "${HOME}/.local/state/anime-power"
-ok
+step "AniMe Matrix default (off)"
+if [ -f "${HOME}/.local/state/anime-power" ]; then
+    skipped
+else
+    echo off > "${HOME}/.local/state/anime-power"
+    ok
+fi
 
-step "Keyboard light timer off"
-run systemctl --user disable --now kbd-backlight-idle.service || true
-ok
+step "Keyboard light timer"
+if systemctl --user is-enabled --quiet kbd-backlight-idle.service 2>/dev/null; then
+    skipped
+else
+    run systemctl --user disable --now kbd-backlight-idle.service || true
+    ok
+fi
 
-step "Refresh rate mode: high"
-rm -f "${HOME}/.local/state/refresh-auto"
-[ -f "${HOME}/.local/state/refresh-mode" ] || echo high > "${HOME}/.local/state/refresh-mode"
-ok
+step "Refresh rate mode"
+if [ -f "${HOME}/.local/state/refresh-mode" ]; then
+    skipped
+else
+    echo high > "${HOME}/.local/state/refresh-mode"
+    ok
+fi
 
 # ---------- services ----------
 section "Enabling services"
@@ -308,6 +334,13 @@ if command -v asusctl >/dev/null 2>&1; then
     fi
 else
     skipped
+fi
+
+step "Fan curves (per power mode)"
+if run "${BIN_DIR}/fan-ctl" seed && run "${BIN_DIR}/fan-ctl" apply; then
+    ok
+else
+    warn "could not seed fan curves (is asusd running? they apply on the next profile switch)"
 fi
 
 # ---------- optional root helper (Extreme mode) ----------

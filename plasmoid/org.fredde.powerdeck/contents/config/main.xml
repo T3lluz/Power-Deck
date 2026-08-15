@@ -20,5 +20,13 @@
       <label>Monochrome accent: 0=White, 1=Green, 2=Teal, 3=Orange, 4=Red, 5=Blue, 6=Purple</label>
       <default>0</default>
     </entry>
+    <entry name="fanCpuMaxRpm" type="Int">
+      <label>Calibrated CPU fan max RPM (GA402 default 5500)</label>
+      <default>5500</default>
+    </entry>
+    <entry name="fanGpuMaxRpm" type="Int">
+      <label>Calibrated GPU fan max RPM (GA402 default 5600)</label>
+      <default>5600</default>
+    </entry>
   </group>
 </kcfg>

@@ -1,5 +1,5 @@
 [Unit]
-Description=Restore power profile and Fn lock settings at login
+Description=Restore power profile, fan curves, and Fn lock settings at login
 After=graphical-session.target
 PartOf=graphical-session.target
 

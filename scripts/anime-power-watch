@@ -8,10 +8,16 @@ ANIME_CTL="$HOME/.local/bin/anime-ctl"
 [ -x "$ANIME_CTL" ] || ANIME_CTL="$(dirname "$0")/anime-ctl"
 REFRESH_CTL="$HOME/.local/bin/refresh-ctl"
 [ -x "$REFRESH_CTL" ] || REFRESH_CTL="$(dirname "$0")/refresh-ctl"
+FAN_CTL="$HOME/.local/bin/fan-ctl"
+[ -x "$FAN_CTL" ] || FAN_CTL="$(dirname "$0")/fan-ctl"
 
 sync() {
     "$ANIME_CTL" sync >/dev/null 2>&1
     "$REFRESH_CTL" sync >/dev/null 2>&1
+    # Re-assert the active mode's fan curve. asusd used to switch the
+    # platform profile on AC/battery; even with that disabled, a late
+    # asusd write can otherwise leave the wrong curve applied.
+    [ -x "$FAN_CTL" ] && "$FAN_CTL" apply >/dev/null 2>&1 || true
 }
 
 # The udev burst can arrive before the AC adapter's "online" attribute

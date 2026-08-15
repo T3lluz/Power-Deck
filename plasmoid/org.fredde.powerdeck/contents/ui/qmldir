@@ -8,3 +8,4 @@ ProfileBurst 1.0 ProfileBurst.qml
 RogSwitch 1.0 RogSwitch.qml
 RogCheck 1.0 RogCheck.qml
 SectionHeader 1.0 SectionHeader.qml
+FanCurveStrip 1.0 FanCurveStrip.qml

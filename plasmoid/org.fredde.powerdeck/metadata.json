@@ -7,12 +7,12 @@
                 "Email": "fstalsberg@gmail.com"
             }
         ],
-        "Description": "Switch power modes, GPU mode, charge limit, and control AniMe, keyboard lighting, and FN-lock from the panel — with live temperatures, power draw, and battery status.",
+        "Description": "Switch power modes, fan curves, GPU mode, charge limit, and control AniMe, keyboard lighting, and FN-lock from the panel — with live temperatures, power draw, and battery status.",
         "Icon": "preferences-system-power-management",
         "Id": "org.fredde.powerdeck",
         "License": "MIT",
         "Name": "Power Deck",
-        "Version": "0.0.03",
+        "Version": "0.0.05",
         "Website": "https://github.com/T3lluz/Power-Deck"
     },
     "X-Plasma-API": "declarativeappletscript",

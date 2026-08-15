@@ -3,8 +3,8 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.components as PC3
 
-// Power profile card: animated vector glyph + name + short description, with
-// an accent glow when active and a press "squeeze" animation.
+// Power profile card: animated vector glyph + name + short description.
+// Compact row when short; a fixed-size centered tile on the landscape rail.
 Item {
     id: root
 
@@ -14,18 +14,31 @@ Item {
     property color accentColor: Theme.accent
     property bool isActive: false
     property string burstEffect: "pulse"
+    // Prefer the tall tile when the parent rail has room.
+    property bool preferTile: true
+
+    readonly property int tileHeight: Math.round(Kirigami.Units.gridUnit * 4.55)
+    readonly property bool tileMode: preferTile
+        && height >= Math.round(Kirigami.Units.gridUnit * 3.8)
+    readonly property int glyphPx: tileMode
+        ? Math.round(Kirigami.Units.gridUnit * 1.95)
+        : Math.round(Kirigami.Units.gridUnit * 1.7)
 
     signal clicked()
 
     onIsActiveChanged: {
         if (isActive) {
             burst.play()
-            badge.play()
+            tileBadge.play()
+            rowBadge.play()
         }
     }
 
     Layout.fillWidth: true
-    Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 2.6)
+    Layout.fillHeight: false
+    Layout.preferredHeight: preferTile ? tileHeight : Math.round(Kirigami.Units.gridUnit * 2.6)
+    Layout.minimumHeight: preferTile ? tileHeight : Math.round(Kirigami.Units.gridUnit * 2.6)
+    Layout.maximumHeight: preferTile ? tileHeight : Math.round(Kirigami.Units.gridUnit * 2.6)
 
     scale: mouse.pressed ? 0.97 : 1.0
     Behavior on scale {
@@ -54,7 +67,18 @@ Item {
             ColorAnimation { duration: Theme.durMed; easing.type: Theme.easeOut }
         }
 
-        // per-profile one-shot activation effect
+        // Active-tile sheen — a soft top-down wash so the selected profile
+        // reads as the hero of the rail, not just a tinted border.
+        Rectangle {
+            visible: root.isActive
+            anchors.fill: parent
+            radius: parent.radius
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Theme.alpha(root.accentColor, 0.16) }
+                GradientStop { position: 0.55; color: "transparent" }
+            }
+        }
+
         ProfileBurst {
             id: burst
             accent: root.accentColor
@@ -62,17 +86,69 @@ Item {
         }
     }
 
+    // ---- tall tile (4:3 dashboard rail) ----
+    ColumnLayout {
+        visible: root.tileMode
+        anchors.fill: parent
+        anchors.leftMargin: Kirigami.Units.smallSpacing
+        anchors.rightMargin: Kirigami.Units.smallSpacing
+        anchors.topMargin: Kirigami.Units.smallSpacing * 1.25
+        anchors.bottomMargin: Kirigami.Units.smallSpacing * 1.25
+        spacing: Kirigami.Units.smallSpacing * 0.5
+
+        Item { Layout.fillHeight: true }
+
+        ProfileGlyph {
+            id: tileBadge
+            kind: root.profileKind
+            glyphColor: root.accentColor
+            glyphSize: root.glyphPx
+            active: root.isActive
+            Layout.preferredWidth: glyphSize
+            Layout.preferredHeight: glyphSize
+            Layout.alignment: Qt.AlignHCenter
+        }
+
+        PC3.Label {
+            Layout.fillWidth: true
+            text: root.profileName
+            color: Kirigami.Theme.textColor
+            font.weight: root.isActive ? Font.Bold : Font.DemiBold
+            font.pixelSize: Kirigami.Theme.smallFont.pixelSize + 1
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
+        }
+
+        PC3.Label {
+            Layout.fillWidth: true
+            text: root.profileDesc
+            color: root.isActive
+                ? Theme.alpha(root.accentColor, 0.95)
+                : Kirigami.Theme.disabledTextColor
+            font.pixelSize: Kirigami.Theme.smallFont.pixelSize - 1
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
+            wrapMode: Text.WordWrap
+            maximumLineCount: 2
+            Behavior on color { ColorAnimation { duration: Theme.durMed } }
+        }
+
+        Item { Layout.fillHeight: true }
+    }
+
+    // ---- compact row (short / fallback) ----
     RowLayout {
+        visible: !root.tileMode
         anchors.fill: parent
         anchors.leftMargin: Kirigami.Units.smallSpacing * 2
         anchors.rightMargin: Kirigami.Units.smallSpacing
         spacing: Kirigami.Units.smallSpacing * 1.25
 
         ProfileGlyph {
-            id: badge
+            id: rowBadge
             kind: root.profileKind
             glyphColor: root.accentColor
-            glyphSize: Math.round(Kirigami.Units.gridUnit * 1.7)
+            glyphSize: root.glyphPx
             active: root.isActive
             Layout.preferredWidth: glyphSize
             Layout.preferredHeight: glyphSize

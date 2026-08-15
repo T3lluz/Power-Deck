@@ -1,0 +1,809 @@
+#!/usr/bin/env bash
+# fan-ctl — per-mode fan curves for Power Deck + live RPM.
+#
+# Power Deck has four modes (extreme, power, balanced, performance).
+# asusd only has three firmware slots, and Extreme/Power Saver both
+# live on LowPower. So this script owns a 4-slot store and writes the
+# active mode's curve onto the matching firmware slot when applying.
+#
+# Apply path matches g-helper-linux's SetFanCurve:
+#   1. write the 8 temp/duty points
+#   2. commit with enable (kernel pwm_enable=1 → EC WMI write)
+#
+# We do that through asusd D-Bus `xyz.ljones.FanCurves` on `/xyz/ljones`
+# (no root, asusd owns the sysfs). Do not write asus_custom_fan_curve
+# from this script.
+#
+# Why not `asusctl fan-curve --mod-profile Quiet`?
+#   Quiet (id 2) and LowPower (id 3) share the stored curve, but asusd
+#   only pushes to the EC for the *active* platform profile. This G14
+#   lists LowPower, not Quiet. CLI Quiet updates /etc/asusd/fan_curves.ron
+#   and never touches hwmon. CLI --data also rejects a duty dip
+#   (non-decreasing PWM) — D-Bus SetFanCurve does not.
+#
+# Usage:
+#   fan-ctl status [mode]      widget dump (default: live Power Deck mode)
+#   fan-ctl rpm                "cpuRpm gpuRpm" (- if missing)
+#   fan-ctl set <mode> <cpu|gpu> <45c:0%,55c:5%,...>
+#   fan-ctl enable <mode> <on|off>
+#   fan-ctl apply [mode]       write the stored curve to the firmware slot
+#   fan-ctl seed               create missing per-mode store files
+#   fan-ctl default <mode>     firmware (BIOS) control for that mode
+#   fan-ctl bias <mode> <+/-n> shift every duty point by n percent
+#   fan-ctl preset <mode> <quiet|stock|cool>
+#   fan-ctl flat <max|zero> [mode]   all points 100% or 0% (live test, not stored)
+#   fan-ctl cal-get                 "cpuMax gpuMax" (GA402 default 5500 5600)
+#   fan-ctl cal-set <cpu> <gpu>     store calibrated max RPM
+#   fan-ctl calibrate [mode]        100% → measure peak RPM → restore curve
+set -u
+
+if [ -z "${ASUSCTL:-}" ]; then
+    if [ -x /usr/bin/asusctl ]; then
+        ASUSCTL=/usr/bin/asusctl
+    else
+        ASUSCTL=asusctl
+    fi
+fi
+BUSCTL="${BUSCTL:-/usr/bin/busctl}"
+ASUSD_DEST="xyz.ljones.Asusd"
+ASUSD_PATH="/xyz/ljones"
+FAN_IFACE="xyz.ljones.FanCurves"
+PLAT_IFACE="xyz.ljones.Platform"
+
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+MODE_FILE="${FAN_CTL_MODE_FILE:-$STATE_HOME/ghelper-profile-mode}"
+STORE_DIR="${FAN_CTL_STATE_DIR:-$STATE_HOME/power-deck-fans}"
+CAL_FILE="${FAN_CTL_CAL_FILE:-$STATE_HOME/power-deck-fan-cal}"
+TEST_MODE=0
+[ "${FAN_CTL_TEST:-}" = "1" ] && TEST_MODE=1
+
+# ---------- Power Deck modes (extreme|power|balanced|performance) ----------
+
+normalize_deck() {
+    local raw lowered live
+    raw="${1:-}"
+    lowered="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+    case "$lowered" in
+        extreme|extreme-saver|extremesaver) echo extreme ;;
+        power|power-saver|powersaver|saver) echo power ;;
+        balanced) echo balanced ;;
+        performance|turbo) echo performance ;;
+        quiet|lowpower|low-power|low_power)
+            live="$(deck_mode)"
+            case "$live" in extreme|power) echo "$live" ;; *) echo extreme ;; esac
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Firmware slot that a Power Deck mode writes to.
+firmware_name() {
+    case "$(normalize_deck "$1")" in
+        extreme|power) echo LowPower ;;
+        balanced) echo Balanced ;;
+        performance) echo Performance ;;
+        *) return 1 ;;
+    esac
+}
+
+# D-Bus PlatformProfile / FanCurves index (asusd 6.3).
+# Quiet (2) is a fan-curve slot name only on GA402 — writes that should
+# apply use LowPower (3).
+apply_id() {
+    case "$(firmware_name "$1")" in
+        Balanced) echo 0 ;;
+        Performance) echo 1 ;;
+        LowPower) echo 3 ;;
+        *) return 1 ;;
+    esac
+}
+
+id_to_firmware() {
+    case "$1" in
+        0) echo Balanced ;;
+        1) echo Performance ;;
+        2) echo Quiet ;;
+        3) echo LowPower ;;
+        *) echo Balanced ;;
+    esac
+}
+
+# Live Power Deck mode: state file first (disambiguates extreme vs power),
+# then power-profiles-daemon.
+deck_mode() {
+    local saved ppd
+    saved="$(cat "$MODE_FILE" 2>/dev/null || true)"
+    case "$saved" in
+        extreme|power|balanced|performance) echo "$saved"; return 0 ;;
+    esac
+    if [ "$TEST_MODE" -eq 1 ]; then
+        echo balanced
+        return 0
+    fi
+    ppd="$(powerprofilesctl get 2>/dev/null || true)"
+    case "$ppd" in
+        power-saver) echo power ;;
+        balanced) echo balanced ;;
+        performance) echo performance ;;
+        *) echo balanced ;;
+    esac
+}
+
+# ---------- firmware helpers (asusd D-Bus) ----------
+
+have_asusctl() { command -v "$ASUSCTL" >/dev/null 2>&1; }
+
+dbus_ok() {
+    [ "$TEST_MODE" -eq 1 ] && return 1
+    [ -x "$BUSCTL" ] || return 1
+    "$BUSCTL" call "$ASUSD_DEST" "$ASUSD_PATH" "$FAN_IFACE" FanCurveData u 0 \
+        >/dev/null 2>&1
+}
+
+dbus_active_id() {
+    local line
+    line="$("$BUSCTL" get-property "$ASUSD_DEST" "$ASUSD_PATH" \
+        "$PLAT_IFACE" PlatformProfile 2>/dev/null)" || return 1
+    printf '%s\n' "${line##* }"
+}
+
+# asusd's AC/battery auto-switch would yank Extreme/Balanced to
+# Performance on plug-in. Power Deck owns the profile.
+pin_asusd_owner() {
+    [ "$TEST_MODE" -eq 1 ] && return 0
+    [ -x "$BUSCTL" ] || return 0
+    "$BUSCTL" set-property "$ASUSD_DEST" "$ASUSD_PATH" "$PLAT_IFACE" \
+        ChangePlatformProfileOnAc b false >/dev/null 2>&1 || true
+    "$BUSCTL" set-property "$ASUSD_DEST" "$ASUSD_PATH" "$PLAT_IFACE" \
+        ChangePlatformProfileOnBattery b false >/dev/null 2>&1 || true
+}
+
+# Keep the firmware slot in sync with the Power Deck mode so SetFanCurve
+# actually writes hwmon (asusd only flushes the *active* profile).
+ensure_firmware_slot() {
+    local want cur
+    [ "$TEST_MODE" -eq 1 ] && return 0
+    want="$(apply_id "$1")" || return 1
+    cur="$(dbus_active_id 2>/dev/null || true)"
+    [ "$cur" = "$want" ] && return 0
+    "$BUSCTL" set-property "$ASUSD_DEST" "$ASUSD_PATH" "$PLAT_IFACE" \
+        PlatformProfile u "$want" >/dev/null 2>&1 || true
+}
+
+hwmon_by_name() {
+    local want="$1" d name
+    for d in /sys/class/hwmon/hwmon*; do
+        [ -r "$d/name" ] || continue
+        name="$(cat "$d/name" 2>/dev/null)" || continue
+        [ "$name" = "$want" ] && { echo "$d"; return 0; }
+    done
+    return 1
+}
+
+read_rpm() {
+    local dir f lab
+    dir="$(hwmon_by_name asus)" || { echo "- -"; return 0; }
+    local cpu="-" gpu="-"
+    for f in "$dir"/fan*_input; do
+        [ -r "$f" ] || continue
+        lab="$(cat "${f%_input}_label" 2>/dev/null)"
+        case "$lab" in
+            cpu_fan|cpu) cpu="$(cat "$f" 2>/dev/null)" ;;
+            gpu_fan|gpu) gpu="$(cat "$f" 2>/dev/null)" ;;
+            *)
+                if [ "$cpu" = "-" ]; then
+                    cpu="$(cat "$f" 2>/dev/null)"
+                elif [ "$gpu" = "-" ]; then
+                    gpu="$(cat "$f" 2>/dev/null)"
+                fi
+                ;;
+        esac
+    done
+    echo "${cpu:--} ${gpu:-}"
+}
+
+curves_supported() {
+    [ "$TEST_MODE" -eq 1 ] && return 0
+    dbus_ok && return 0
+    have_asusctl || return 1
+    hwmon_by_name asus_custom_fan_curve >/dev/null || return 1
+    "$ASUSCTL" fan-curve --mod-profile LowPower >/dev/null 2>&1 \
+        || "$ASUSCTL" fan-curve --mod-profile Quiet >/dev/null 2>&1
+}
+
+pct_to_pwm() { echo $(( ($1 * 255 + 50) / 100 )); }
+pwm_to_pct() { echo $(( ($1 * 100 + 127) / 255 )); }
+
+# Parse `busctl call … FanCurveData` into: FAN enabled pwm... temp...
+parse_dbus_curves() {
+    python3 -c '
+import sys
+parts = sys.stdin.read().replace("\"", "").split()
+i = 0
+while i < len(parts) and parts[i] not in ("CPU", "GPU", "MID"):
+    i += 1
+while i + 17 < len(parts):
+    fan = parts[i]
+    if fan not in ("CPU", "GPU", "MID"):
+        i += 1
+        continue
+    nums = [int(x) for x in parts[i + 1:i + 17]]
+    en = parts[i + 17].lower() == "true"
+    pwms, temps = nums[:8], nums[8:]
+    print(fan, "true" if en else "false",
+          ",".join(str(x) for x in pwms),
+          ",".join(str(x) for x in temps))
+    i += 18
+'
+}
+
+parse_dump() {
+    python3 -c '
+import re, sys
+text = sys.stdin.read()
+blocks = re.findall(
+    r"fan:\s*(\w+),\s*pwm:\s*\(([^)]+)\),\s*temp:\s*\(([^)]+)\),\s*enabled:\s*(true|false)",
+    text, re.I)
+if not blocks:
+    sys.exit(1)
+for fan, pwm, temp, en in blocks:
+    print(fan.upper(), en.lower(), pwm.replace(" ", ""), temp.replace(" ", ""))
+'
+}
+
+dump_firmware() {
+    local fw="$1" id raw
+    [ "$TEST_MODE" -eq 1 ] && return 1
+    if id="$(apply_id "$2")" && dbus_ok; then
+        raw="$("$BUSCTL" call "$ASUSD_DEST" "$ASUSD_PATH" "$FAN_IFACE" \
+            FanCurveData u "$id" 2>/dev/null)" || raw=""
+        if [ -n "$raw" ]; then
+            printf '%s\n' "$raw" | parse_dbus_curves
+            return 0
+        fi
+    fi
+    raw="$("$ASUSCTL" fan-curve --mod-profile "$fw" 2>/dev/null)" \
+        || raw="$("$ASUSCTL" fan-curve --mod-profile Quiet 2>/dev/null)" \
+        || return 1
+    printf '%s\n' "$raw" | parse_dump
+}
+
+curve_line_for() {
+    local want="$1" fan en pwms temps parsed
+    while read -r fan en pwms temps; do
+        [ "$fan" = "$want" ] || continue
+        parsed="$(printf '%s %s %s %s\n' "$fan" "$en" "$pwms" "$temps" | pwm_to_curve_line)"
+        echo "$parsed"
+        return 0
+    done
+    echo "false"
+    return 1
+}
+
+pwm_to_curve_line() {
+    local fan en pwms temps
+    read -r fan en pwms temps
+    local IFS=','
+    local -a p=($pwms) t=($temps)
+    local i out="" pct
+    for i in 0 1 2 3 4 5 6 7; do
+        [ -n "${t[$i]:-}" ] && [ -n "${p[$i]:-}" ] || continue
+        pct="$(pwm_to_pct "${p[$i]}")"
+        [ -n "$out" ] && out+=","
+        out+="${t[$i]}:${pct}"
+    done
+    echo "$en $out"
+}
+
+validate_curve() {
+    local data="$1" pair t p last=-1 n=0
+    IFS=',' read -ra pairs <<< "$data"
+    for pair in "${pairs[@]}"; do
+        t="${pair%%:*}"
+        p="${pair#*:}"
+        t="${t%c}"; t="${t%C}"
+        p="${p%%%}"
+        case "$t" in ''|*[!0-9]*) return 1 ;; esac
+        case "$p" in ''|*[!0-9]*) return 1 ;; esac
+        [ "$t" -ge 20 ] && [ "$t" -le 110 ] || return 1
+        [ "$p" -le 100 ] || return 1
+        [ "$t" -ge "$last" ] || return 1
+        last="$t"
+        n=$((n + 1))
+    done
+    [ "$n" -eq 8 ]
+}
+
+# Split "45:0,55:5,..." into temps[] and pwms[] (0-255).
+curve_to_arrays() {
+    local data="$1" pair t p
+    temps=()
+    pwms=()
+    IFS=',' read -ra pairs <<< "$data"
+    for pair in "${pairs[@]}"; do
+        t="${pair%%:*}"; p="${pair#*:}"
+        t="${t%c}"; t="${t%C}"; p="${p%%%}"
+        temps+=("$t")
+        pwms+=("$(pct_to_pwm "$p")")
+    done
+}
+
+fan_dbus_name() {
+    case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+        cpu) echo CPU ;;
+        gpu) echo GPU ;;
+        mid) echo MID ;;
+        *) return 1 ;;
+    esac
+}
+
+# g-helper order: points first, then enable (pwm_enable=1) so the kernel
+# pushes the curve to the EC. asusd SetFanCurve on the *active* profile
+# id writes hwmon; SetFanCurvesEnabled is the commit.
+dbus_set_curve() {
+    local id="$1" fan="$2"
+    shift 2
+    local -a p=("$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8")
+    shift 8
+    local -a t=("$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8")
+    "$BUSCTL" call "$ASUSD_DEST" "$ASUSD_PATH" "$FAN_IFACE" SetFanCurve \
+        "u(s(yyyyyyyy)(yyyyyyyy)b)" \
+        "$id" "$fan" \
+        "${p[0]}" "${p[1]}" "${p[2]}" "${p[3]}" "${p[4]}" "${p[5]}" "${p[6]}" "${p[7]}" \
+        "${t[0]}" "${t[1]}" "${t[2]}" "${t[3]}" "${t[4]}" "${t[5]}" "${t[6]}" "${t[7]}" \
+        true
+}
+
+dbus_set_enabled() {
+    local id="$1" want="$2"
+    "$BUSCTL" call "$ASUSD_DEST" "$ASUSD_PATH" "$FAN_IFACE" \
+        SetFanCurvesEnabled ub "$id" "$want"
+}
+
+write_firmware_curve() {
+    local mode="$1" fan="$2" data="$3" id dbus_fan
+    [ "$TEST_MODE" -eq 1 ] && return 0
+    dbus_fan="$(fan_dbus_name "$fan")" || return 1
+    curve_to_arrays "$data"
+    id="$(apply_id "$mode")" || return 1
+
+    if dbus_ok; then
+        ensure_firmware_slot "$mode"
+        dbus_set_curve "$id" "$dbus_fan" \
+            "${pwms[0]}" "${pwms[1]}" "${pwms[2]}" "${pwms[3]}" \
+            "${pwms[4]}" "${pwms[5]}" "${pwms[6]}" "${pwms[7]}" \
+            "${temps[0]}" "${temps[1]}" "${temps[2]}" "${temps[3]}" \
+            "${temps[4]}" "${temps[5]}" "${temps[6]}" "${temps[7]}" \
+            || return 1
+        dbus_set_enabled "$id" true || return 1
+        return 0
+    fi
+
+    have_asusctl || { echo "fan-ctl: asusd D-Bus and asusctl missing" >&2; return 1; }
+    local asus="" i fw
+    fw="$(firmware_name "$mode")"
+    for i in 0 1 2 3 4 5 6 7; do
+        [ -n "$asus" ] && asus+=","
+        asus+="${temps[$i]}c:${pwms[$i]}"
+    done
+    "$ASUSCTL" fan-curve --mod-profile "$fw" --fan "$fan" --data "$asus" \
+        || "$ASUSCTL" fan-curve --mod-profile Quiet --fan "$fan" --data "$asus" \
+        || return 1
+    "$ASUSCTL" fan-curve --mod-profile "$fw" --enable-fan-curves true >/dev/null 2>&1 \
+        || "$ASUSCTL" fan-curve --mod-profile Quiet --enable-fan-curves true >/dev/null 2>&1 \
+        || true
+}
+
+write_firmware_enabled() {
+    local mode="$1" want="$2" id fw
+    [ "$TEST_MODE" -eq 1 ] && return 0
+    id="$(apply_id "$mode")" || return 1
+    if dbus_ok; then
+        [ "$want" = "true" ] && ensure_firmware_slot "$mode"
+        dbus_set_enabled "$id" "$want"
+        return $?
+    fi
+    have_asusctl || return 1
+    fw="$(firmware_name "$mode")"
+    "$ASUSCTL" fan-curve --mod-profile "$fw" --enable-fan-curves "$want" >/dev/null 2>&1 \
+        || "$ASUSCTL" fan-curve --mod-profile Quiet --enable-fan-curves "$want" >/dev/null 2>&1 \
+        || return 1
+}
+
+# ---------- per-mode store ----------
+
+preset_data() {
+    local who="$1" fan="$2"
+    case "$who:$fan" in
+        quiet:cpu|quiet:gpu)
+            echo "45:0,55:0,62:0,68:0,72:15,80:30,88:55,97:90"
+            ;;
+        stock:cpu)
+            echo "50:1,55:13,60:30,64:32,74:44,78:51,82:59,97:100"
+            ;;
+        stock:gpu)
+            echo "50:1,55:11,60:18,64:32,74:42,78:51,82:59,97:91"
+            ;;
+        cool:cpu|cool:gpu)
+            echo "40:10,50:25,58:40,65:55,72:70,80:85,88:95,97:100"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+store_path() { echo "$STORE_DIR/$1"; }
+
+# Sets store_en (custom|firmware), store_cpu, store_gpu.
+read_store() {
+    local f line
+    store_en="firmware"
+    store_cpu=""
+    store_gpu=""
+    f="$(store_path "$1")"
+    [ -r "$f" ] || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            custom|firmware) store_en="$line" ;;
+            cpu\ *) store_cpu="${line#cpu }" ;;
+            gpu\ *) store_gpu="${line#gpu }" ;;
+        esac
+    done < "$f"
+    return 0
+}
+
+write_store() {
+    local mode="$1" f tmp
+    mkdir -p "$STORE_DIR"
+    f="$(store_path "$mode")"
+    tmp="$(mktemp "$STORE_DIR/.tmp.XXXXXX")"
+    {
+        echo "$store_en"
+        echo "cpu $store_cpu"
+        echo "gpu $store_gpu"
+    } > "$tmp"
+    mv "$tmp" "$f"
+}
+
+seed_mode() {
+    local mode="$1" fw dump cpu_line gpu_line cpu_c gpu_c en
+    [ -n "$mode" ] || return 1
+    [ -r "$(store_path "$mode")" ] && return 0
+
+    store_en="firmware"
+    store_cpu="$(preset_data stock cpu)"
+    store_gpu="$(preset_data stock gpu)"
+
+    fw="$(firmware_name "$mode")"
+    dump="$(dump_firmware "$fw" "$mode" 2>/dev/null || true)"
+    if [ -n "$dump" ]; then
+        cpu_line="$(printf '%s\n' "$dump" | curve_line_for CPU)"
+        gpu_line="$(printf '%s\n' "$dump" | curve_line_for GPU)"
+        cpu_c="${cpu_line#* }"
+        gpu_c="${gpu_line#* }"
+        en="${cpu_line%% *}"
+        [ "$gpu_line" != "${gpu_line#* }" ] && [ "${gpu_line%% *}" = "true" ] && en="true"
+        if [ -n "$cpu_c" ] && [ "$cpu_c" != "$cpu_line" ]; then
+            store_cpu="$cpu_c"
+        fi
+        if [ -n "$gpu_c" ] && [ "$gpu_c" != "$gpu_line" ]; then
+            store_gpu="$gpu_c"
+        fi
+        [ "$en" = "true" ] && store_en="custom"
+    fi
+
+    case "$mode" in
+        extreme)
+            # Extreme Saver is the silent mode. Keep a dumped custom
+            # curve; otherwise start from the quiet preset.
+            if [ "$store_en" != "custom" ] || [ -z "$dump" ]; then
+                store_cpu="$(preset_data quiet cpu)"
+                store_gpu="$(preset_data quiet gpu)"
+            fi
+            store_en="custom"
+            ;;
+        power)
+            # Power Saver shares LowPower with Extreme. Do not inherit
+            # the silent curve — BIOS unless the user customizes later.
+            store_cpu="$(preset_data stock cpu)"
+            store_gpu="$(preset_data stock gpu)"
+            store_en="firmware"
+            ;;
+    esac
+
+    write_store "$mode"
+}
+
+cmd_seed() {
+    local m
+    for m in extreme power balanced performance; do
+        seed_mode "$m"
+    done
+}
+
+apply_store() {
+    local mode="$1"
+    seed_mode "$mode"
+    read_store "$mode" || return 1
+    pin_asusd_owner
+    if [ "$store_en" = "custom" ]; then
+        [ -n "$store_cpu" ] && write_firmware_curve "$mode" cpu "$store_cpu" || return 1
+        [ -n "$store_gpu" ] && write_firmware_curve "$mode" gpu "$store_gpu" || return 1
+        return 0
+    fi
+    write_firmware_enabled "$mode" false
+}
+
+# ---------- commands ----------
+
+cmd_status() {
+    local mode live rpm avail="no" viewed
+    live="$(deck_mode)"
+    if [ -n "${1:-}" ]; then
+        viewed="$(normalize_deck "$1")" || {
+            echo "fan-ctl: unknown profile $1" >&2
+            return 1
+        }
+    else
+        viewed="$live"
+    fi
+    seed_mode "$viewed"
+    read_store "$viewed" || true
+    rpm="$(read_rpm)"
+
+    if curves_supported; then
+        avail="yes"
+    fi
+    echo "$avail ${store_en:-firmware} $viewed $rpm $live"
+    echo "cpu ${store_cpu:-}"
+    echo "gpu ${store_gpu:-}"
+}
+
+cmd_set() {
+    local mode fan data
+    mode="$(normalize_deck "$1")" || {
+        echo "fan-ctl: unknown profile $1" >&2
+        return 1
+    }
+    fan="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+    data="$3"
+    case "$fan" in cpu|gpu|mid) ;; *)
+        echo "fan-ctl: fan must be cpu or gpu" >&2
+        return 1
+        ;;
+    esac
+    validate_curve "$data" || {
+        echo "fan-ctl: need 8 increasing temp:duty points (20-110c, 0-100%)" >&2
+        return 1
+    }
+    seed_mode "$mode"
+    read_store "$mode"
+    if [ "$fan" = "cpu" ]; then
+        store_cpu="$data"
+    else
+        store_gpu="$data"
+    fi
+    store_en="custom"
+    write_store "$mode"
+    if [ "$(deck_mode)" = "$mode" ]; then
+        apply_store "$mode" || return 1
+    fi
+}
+
+cmd_enable() {
+    local mode want
+    mode="$(normalize_deck "$1")" || return 1
+    case "$2" in
+        on|true|1) want="custom" ;;
+        off|false|0) want="firmware" ;;
+        *) echo "fan-ctl: enable on|off" >&2; return 1 ;;
+    esac
+    seed_mode "$mode"
+    read_store "$mode"
+    store_en="$want"
+    write_store "$mode"
+    if [ "$(deck_mode)" = "$mode" ]; then
+        apply_store "$mode" || return 1
+    fi
+}
+
+cmd_apply() {
+    local mode
+    if [ -n "${1:-}" ]; then
+        mode="$(normalize_deck "$1")" || {
+            echo "fan-ctl: unknown profile $1" >&2
+            return 1
+        }
+    else
+        mode="$(deck_mode)"
+    fi
+    apply_store "$mode"
+}
+
+cmd_default() {
+    cmd_enable "$1" off
+}
+
+shift_curve() {
+    local data="$1" delta="$2" pair t p out="" np
+    IFS=',' read -ra pairs <<< "$data"
+    for pair in "${pairs[@]}"; do
+        t="${pair%%:*}"; p="${pair#*:}"
+        t="${t%c}"; t="${t%C}"; p="${p%%%}"
+        np=$((p + delta))
+        [ "$np" -lt 0 ] && np=0
+        [ "$np" -gt 100 ] && np=100
+        [ -n "$out" ] && out+=","
+        out+="${t}:${np}"
+    done
+    echo "$out"
+}
+
+cmd_bias() {
+    local mode delta
+    mode="$(normalize_deck "$1")" || return 1
+    delta="$2"
+    case "$delta" in
+        ''|*[!0-9+-]* ) echo "fan-ctl: bias needs +N or -N" >&2; return 1 ;;
+    esac
+    seed_mode "$mode"
+    read_store "$mode" || return 1
+    cmd_set "$mode" cpu "$(shift_curve "$store_cpu" "$delta")" || return 1
+    cmd_set "$mode" gpu "$(shift_curve "$store_gpu" "$delta")" || return 1
+}
+
+cmd_preset() {
+    local mode name
+    mode="$(normalize_deck "$1")" || return 1
+    name="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+    case "$name" in quiet|stock|cool) ;; *)
+        echo "fan-ctl: preset quiet|stock|cool" >&2
+        return 1
+        ;;
+    esac
+    cmd_set "$mode" cpu "$(preset_data "$name" cpu)" || return 1
+    cmd_set "$mode" gpu "$(preset_data "$name" gpu)" || return 1
+}
+
+CAL_DEFAULT_CPU=5500
+CAL_DEFAULT_GPU=5600
+FLAT_MAX="30:100,40:100,50:100,60:100,70:100,80:100,90:100,100:100"
+FLAT_ZERO="30:0,40:0,50:0,60:0,70:0,80:0,90:0,100:0"
+
+# Live-only: does not touch the per-mode store (used by calibrate).
+cmd_flat() {
+    local which mode curve
+    which="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    if [ -n "${2:-}" ]; then
+        mode="$(normalize_deck "$2")" || return 1
+    else
+        mode="$(deck_mode)"
+    fi
+    case "$which" in
+        max|full|100) curve="$FLAT_MAX" ;;
+        zero|min|off|0) curve="$FLAT_ZERO" ;;
+        *) echo "fan-ctl: flat max|zero" >&2; return 1 ;;
+    esac
+    write_firmware_curve "$mode" cpu "$curve" || return 1
+    write_firmware_curve "$mode" gpu "$curve"
+}
+
+cmd_cal_get() {
+    if [ -r "$CAL_FILE" ]; then
+        awk 'NF>=2 {print $1, $2; found=1} END {if (!found) exit 1}' "$CAL_FILE" \
+            && return 0
+    fi
+    echo "$CAL_DEFAULT_CPU $CAL_DEFAULT_GPU"
+}
+
+cmd_cal_set() {
+    local cpu gpu
+    cpu="${1:-}"
+    gpu="${2:-}"
+    case "$cpu" in ''|*[!0-9]*) echo "fan-ctl: cal-set needs cpu gpu RPM" >&2; return 1 ;; esac
+    case "$gpu" in ''|*[!0-9]*) echo "fan-ctl: cal-set needs cpu gpu RPM" >&2; return 1 ;; esac
+    mkdir -p "$(dirname "$CAL_FILE")"
+    echo "$cpu $gpu" > "$CAL_FILE"
+}
+
+# Same idea as g-helper-linux FanSensorControl: 100% curve, poll until
+# peak RPM stops rising, store max. Firmware still owns live speed —
+# this only scales the UI (duty% → estimated RPM). The per-mode store
+# is left alone; apply_store puts the user's curve back.
+cmd_calibrate() {
+    local mode cmax=0 gmax=0 same=0 i rpm cr gr
+    if [ -n "${1:-}" ]; then
+        mode="$(normalize_deck "$1")" || return 1
+    else
+        mode="$(deck_mode)"
+    fi
+    seed_mode "$mode"
+    read_store "$mode" || return 1
+
+    restore_cal() { apply_store "$mode" || true; }
+    trap restore_cal EXIT
+
+    cmd_flat max "$mode" || { trap - EXIT; restore_cal; return 1; }
+    # From a dead stop this G14 takes ~10s to move, then ~1 min to
+    # reach BIOS max (~5500). Stop after the peak holds 8s, or 55s.
+    sleep 3
+    for i in $(seq 1 55); do
+        rpm="$(read_rpm)"
+        cr="${rpm%% *}"
+        gr="${rpm##* }"
+        case "$cr" in ''|*[!0-9]*) cr=0 ;; esac
+        case "$gr" in ''|*[!0-9]*) gr=0 ;; esac
+        if [ "$cr" -gt "$cmax" ] || [ "$gr" -gt "$gmax" ]; then
+            [ "$cr" -gt "$cmax" ] && cmax="$cr"
+            [ "$gr" -gt "$gmax" ] && gmax="$gr"
+            same=0
+        else
+            same=$((same + 1))
+        fi
+        echo "cal $i cpu=$cr gpu=$gr peak=$cmax/$gmax" >&2
+        [ "$same" -ge 8 ] && [ "$cmax" -ge 4000 ] && break
+        sleep 1
+    done
+
+    trap - EXIT
+    restore_cal
+
+    [ "$cmax" -lt 2000 ] && cmax="$CAL_DEFAULT_CPU"
+    [ "$gmax" -lt 2000 ] && gmax="$CAL_DEFAULT_GPU"
+    [ "$cmax" -gt 10400 ] && cmax="$CAL_DEFAULT_CPU"
+    [ "$gmax" -gt 10400 ] && gmax="$CAL_DEFAULT_GPU"
+    cmd_cal_set "$cmax" "$gmax"
+    echo "ok $cmax $gmax"
+}
+
+usage() {
+    echo "Usage: fan-ctl status [mode] | rpm | set <mode> <cpu|gpu> <curve>" >&2
+    echo "       fan-ctl enable <mode> <on|off> | apply [mode] | seed" >&2
+    echo "       fan-ctl default <mode> | bias <mode> <+/-n> | preset <mode> <quiet|stock|cool>" >&2
+    echo "       fan-ctl flat <max|zero> [mode] | calibrate [mode]" >&2
+    echo "       fan-ctl cal-get | cal-set <cpuRpm> <gpuRpm>" >&2
+    echo "Modes: extreme | power | balanced | performance" >&2
+    exit 1
+}
+
+cmd="${1:-status}"
+shift $(( $# > 0 ? 1 : 0 ))
+
+case "$cmd" in
+    status) cmd_status "${1:-}" ;;
+    rpm) read_rpm ;;
+    set)
+        [ $# -ge 3 ] || usage
+        cmd_set "$1" "$2" "$3"
+        ;;
+    enable)
+        [ $# -ge 2 ] || usage
+        cmd_enable "$1" "$2"
+        ;;
+    apply) cmd_apply "${1:-}" ;;
+    seed) cmd_seed ;;
+    default)
+        [ $# -ge 1 ] || usage
+        cmd_default "$1"
+        ;;
+    bias)
+        [ $# -ge 2 ] || usage
+        cmd_bias "$1" "$2"
+        ;;
+    preset)
+        [ $# -ge 2 ] || usage
+        cmd_preset "$1" "$2"
+        ;;
+    flat)
+        [ $# -ge 1 ] || usage
+        cmd_flat "$1" "${2:-}"
+        ;;
+    cal-get|calget) cmd_cal_get ;;
+    cal-set|calset)
+        [ $# -ge 2 ] || usage
+        cmd_cal_set "$1" "$2"
+        ;;
+    calibrate|cal) cmd_calibrate "${1:-}" ;;
+    *) usage ;;
+esac

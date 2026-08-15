@@ -154,6 +154,84 @@ pm gfx-commit >/dev/null 2>&1
 check "user-created modules-load file is not removed" \
     test -f "$sandbox/modules-load.d/nvidia-utils.conf"
 
+# ---------- fan-ctl per-mode store ----------
+
+FAN_CTL="$REPO_ROOT/scripts/fan-ctl"
+fan_sandbox="$(mktemp -d /tmp/power-deck-fan-tests.XXXXXX)"
+trap 'rm -rf "$sandbox" "$fan_sandbox"' EXIT
+
+fc() {
+    FAN_CTL_TEST=1 \
+    FAN_CTL_STATE_DIR="$fan_sandbox/fans" \
+    FAN_CTL_MODE_FILE="$fan_sandbox/mode" \
+    FAN_CTL_CAL_FILE="$fan_sandbox/cal" \
+    bash "$FAN_CTL" "$@"
+}
+
+echo extreme > "$fan_sandbox/mode"
+fc seed >/dev/null
+check "seed creates all four mode files" \
+    test -f "$fan_sandbox/fans/extreme" -a -f "$fan_sandbox/fans/power" \
+         -a -f "$fan_sandbox/fans/balanced" -a -f "$fan_sandbox/fans/performance"
+
+check "extreme seeds as custom" \
+    grep -qx custom "$fan_sandbox/fans/extreme"
+check "power seeds as firmware" \
+    grep -qx firmware "$fan_sandbox/fans/power"
+
+ext_cpu=$(awk '/^cpu /{print $2}' "$fan_sandbox/fans/extreme")
+pwr_cpu=$(awk '/^cpu /{print $2}' "$fan_sandbox/fans/power")
+check "extreme and power start with different CPU curves" \
+    test "$ext_cpu" != "$pwr_cpu"
+
+st=$(fc status | head -n1)
+check "status default uses the live mode file" \
+    bash -c 'set -- $1; [ "$3" = extreme ] && [ "$6" = extreme ]' _ "$st"
+check "status first field is availability" \
+    bash -c 'set -- $1; [ "$1" = yes ]' _ "$st"
+check "status second field is custom for extreme" \
+    bash -c 'set -- $1; [ "$2" = custom ]' _ "$st"
+
+st_pwr=$(fc status power | head -n1)
+check "status power reports firmware while live is extreme" \
+    bash -c 'set -- $1; [ "$2" = firmware ] && [ "$3" = power ] && [ "$6" = extreme ]' _ "$st_pwr"
+
+NEW_CPU="40:5,50:10,60:20,70:40,80:60,85:75,90:90,100:100"
+fc set extreme cpu "$NEW_CPU" >/dev/null
+check "set updates only the extreme CPU curve" \
+    grep -q "$NEW_CPU" "$fan_sandbox/fans/extreme"
+check "set does not change the power store" \
+    grep -q "$pwr_cpu" "$fan_sandbox/fans/power"
+
+fc set power cpu "$NEW_CPU" >/dev/null
+check "set power marks that mode custom" \
+    grep -qx custom "$fan_sandbox/fans/power"
+check "extreme store is unchanged after editing power" \
+    grep -q "$NEW_CPU" "$fan_sandbox/fans/extreme"
+
+fc enable power off >/dev/null
+check "enable off stores firmware without dropping points" \
+    bash -c 'grep -qx firmware "'"$fan_sandbox"'/fans/power" && grep -q "'"$NEW_CPU"'" "'"$fan_sandbox"'/fans/power"'
+
+fc apply power >/dev/null
+check "apply succeeds in test mode" true
+
+if fc set bogus cpu "$NEW_CPU" >/dev/null 2>&1; then
+    check "set rejects an unknown mode" false
+else
+    check "set rejects an unknown mode" true
+fi
+
+if fc set extreme cpu "30:10,40:5" >/dev/null 2>&1; then
+    check "set rejects a short curve" false
+else
+    check "set rejects a short curve" true
+fi
+
+fc cal-set 5400 5700 >/dev/null
+check "cal-get returns the stored max RPM" \
+    test "$(fc cal-get)" = "5400 5700"
+
 # ---------- script syntax ----------
 
 for f in "$REPO_ROOT"/scripts/* "$REPO_ROOT"/system/power-mode "$REPO_ROOT"/install.sh; do
