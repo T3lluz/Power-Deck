@@ -28,7 +28,7 @@ Item {
         switch (kind) {
             case "cpu":        return 1.0
             case "gpu":        return 1.32
-            case "battery":    return 1.38
+            case "battery":    return root.charging ? 1.22 : 1.38
             case "watt":       return 1.26
             case "fan":        return 1.26
             case "hz":         return 1.38
@@ -141,39 +141,59 @@ Item {
         }
 
         function drawBattery(ctx) {
-            // Same cell as idle; charging drops the nub and layers an
-            // outlined bolt on the right.
+            // Pixel status bar: cell on the left, bolt sits beside it
+            // while charging — not drawn on top of the fill.
+            if (root.charging) {
+                // Cell stays full-size; bolt sits on the right edge and
+                // overlaps it a little, like Pixel's status-bar meter.
+                roundRect(ctx, 2.2, 7, 14.4, 10, 2.2)
+                ctx.stroke()
+                roundRect(ctx, 4.2, 9.4, 7.4, 5.2, 1.3)
+                ctx.fill()
+                drawPixelBolt(ctx)
+                return
+            }
             roundRect(ctx, 2.5, 7, 16.5, 10, 2.2)
             ctx.stroke()
-            if (!root.charging) {
-                ctx.lineWidth = 2
-                ctx.beginPath()
-                ctx.moveTo(21, 10.5)
-                ctx.lineTo(21, 13.5)
-                ctx.stroke()
-            }
+            ctx.lineWidth = 2
+            ctx.beginPath()
+            ctx.moveTo(21, 10.5)
+            ctx.lineTo(21, 13.5)
+            ctx.stroke()
             roundRect(ctx, 4.9, 9.4, 8.7, 5.2, 1.3)
             ctx.fill()
-            if (root.charging)
-                drawPixelBolt(ctx)
         }
 
-        // Compact outlined bolt on the right of the cell (Pixel placement,
-        // stroke only so it stays white against the tinted battery).
+        // Watts-bolt proportions, sized closer to Pixel (AOSP bolt frame
+        // is ~half the cell). Nudged left so it covers the right of the
+        // body; a hairline punch keeps the white fill readable.
         function drawPixelBolt(ctx) {
-            var x = 14.4, y = 7.15, w = 5.6, h = 9.7
-            ctx.beginPath()
-            ctx.moveTo(x + w * 0.58, y)
-            ctx.lineTo(x + w * 0.04, y + h * 0.50)
-            ctx.lineTo(x + w * 0.40, y + h * 0.50)
-            ctx.lineTo(x + w * 0.34, y + h)
-            ctx.lineTo(x + w * 0.96, y + h * 0.41)
-            ctx.lineTo(x + w * 0.52, y + h * 0.41)
-            ctx.closePath()
-            ctx.strokeStyle = root.boltColor
-            ctx.lineWidth = 1.7
+            var x = 14.2, y = 5.15, w = 7.5, h = 13.7
+            function boltPath() {
+                ctx.beginPath()
+                ctx.moveTo(x + w * 0.62, y)
+                ctx.lineTo(x,            y + h * 0.56)
+                ctx.lineTo(x + w * 0.42, y + h * 0.56)
+                ctx.lineTo(x + w * 0.34, y + h)
+                ctx.lineTo(x + w,        y + h * 0.38)
+                ctx.lineTo(x + w * 0.54, y + h * 0.38)
+                ctx.closePath()
+            }
+            ctx.save()
+            ctx.globalCompositeOperation = "destination-out"
+            ctx.lineWidth = 1.15
             ctx.lineJoin = "round"
             ctx.lineCap = "round"
+            boltPath()
+            ctx.stroke()
+            ctx.restore()
+            ctx.fillStyle = root.boltColor
+            ctx.strokeStyle = root.boltColor
+            ctx.lineWidth = 0.4
+            ctx.lineJoin = "miter"
+            ctx.miterLimit = 3
+            boltPath()
+            ctx.fill()
             ctx.stroke()
         }
 
