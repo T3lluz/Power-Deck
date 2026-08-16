@@ -10,12 +10,12 @@ Power Deck brings GHelper-style laptop controls to KDE Plasma. Scroll the panel 
 - **Power modes** — Extreme Saver, Power Saver, Balanced, and Performance
 - **Fan curves** — per-mode 8-point CPU/GPU editor (same as Armoury / G-Helper). Switching profiles applies that mode's curve; Custom or Firmware per mode. Survives reboot.
 - **Scroll to switch** — mouse wheel on the panel icon cycles modes
-- **CPU & GPU temperatures & power draw** — live readouts in the popup and in the panel-icon tooltip, color-coded by heat
-- **Battery status** — charge %, time remaining, and AC state in the popup header, tooltip, and (optionally) the panel
+- **CPU & GPU temperatures & power draw** — live readouts in the popup, the panel, and the panel-icon tooltip, color-coded by heat
+- **Battery status** — charge %, time remaining, AC state, and charge/discharge watts in the popup header, tooltip, and (optionally) the panel
 - **Battery charge limit** — slider from 80% to 100% (in 5% steps) to extend battery lifespan, plus a one-shot full charge
 - **GPU mode switching** — Integrated / Hybrid (queued for next boot), with a live tag showing which GPUs are actually active
 - **Notifications** — optional desktop notifications on profile switches, plug/unplug, and GPU mode changes
-- **Configurable panel display** — icon only, icon + profile, icon + battery %, or all three
+- **Configurable panel display** — pick any mix of profile, CPU/GPU temps and watts, battery %, charge/discharge watts, time remaining, fan RPM, and refresh rate, then reorder them. Icons + values, values only, or icons only, with optional separators and mini bars (same layout language as CasaOS Homelab)
 - **Monochrome theme** — optional neutral grayscale palette (toggle in the widget config) instead of the colored ROG accents
 - **AniMe Matrix** — toggle display, pick Banner, Logo, or Static, auto-off on battery
 - **Keyboard light timer** — idle timeout, brightness slider, keep-on-AC option
@@ -35,7 +35,7 @@ CPU boost is managed by `power-profiles-daemon`: the `power-saver` profile (used
 
 ### Temperatures and power draw
 
-The popup header shows CPU and GPU temperature pills (with live watts where the hardware exposes them — amdgpu PPT, NVIDIA via nvidia-smi, CPU package via RAPL when readable), refreshed every few seconds, and the same readings appear when hovering the panel icon. Colors shift from teal (cool) through amber (70 °C+) to red (85 °C+). Readings come straight from sysfs hwmon sensors — `k10temp`/`zenpower`/`coretemp` for the CPU and `amdgpu`/`nouveau` for the GPU, with ACPI thermal-zone and `nvidia-smi` fallbacks. The NVIDIA fallback only queries the GPU while it is awake, so polling never wakes a runtime-suspended dGPU.
+The popup header shows CPU and GPU temperature pills (with live watts where the hardware exposes them — amdgpu PPT, NVIDIA via nvidia-smi, CPU package via RAPL when readable), refreshed every few seconds. The same readings can sit in the panel itself — right-click the widget → Configure Power Deck… → Panel display — alongside battery charge/discharge watts, time remaining, fan RPM, and refresh rate. Hovering the panel icon still shows the full tooltip. Colors shift from teal (cool) through amber (70 °C+) to red (85 °C+). Readings come straight from sysfs hwmon sensors — `k10temp`/`zenpower`/`coretemp` for the CPU and `amdgpu`/`nouveau` for the GPU, with ACPI thermal-zone and `nvidia-smi` fallbacks. The NVIDIA fallback only queries the GPU while it is awake, so polling never wakes a runtime-suspended dGPU.
 
 ### Battery charge limit
 

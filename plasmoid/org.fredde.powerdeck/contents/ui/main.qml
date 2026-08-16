@@ -44,10 +44,7 @@ PlasmoidItem {
         property string sensorLabel
         property int temp: -1
         property int watts: -1
-        readonly property color heat: temp < 0 ? Kirigami.Theme.disabledTextColor
-            : temp >= 85 ? Theme.red
-            : temp >= 70 ? Theme.amber
-            : Theme.teal
+        readonly property color heat: Theme.heatColor(temp)
 
         implicitWidth: pillRow.implicitWidth + Kirigami.Units.largeSpacing * 2
         Layout.fillWidth: false
@@ -81,7 +78,13 @@ PlasmoidItem {
             }
 
             PC3.Label {
-                text: pill.temp >= 0 ? i18n("%1°C", pill.temp) : i18n("—")
+                text: {
+                    if (pill.temp < 0)
+                        return i18n("—")
+                    if (Plasmoid.configuration.tempUnit === "F")
+                        return i18n("%1°F", Math.round(pill.temp * 9 / 5 + 32))
+                    return i18n("%1°C", pill.temp)
+                }
                 color: pill.heat
                 font.weight: Font.Bold
                 font.pixelSize: Kirigami.Theme.smallFont.pixelSize
@@ -318,6 +321,13 @@ PlasmoidItem {
         return h > 0 ? i18n("%1h %2m", h, mm) : i18n("%1m", mm)
     }
 
+    function formatTemp(c) {
+        if (c < 0) return i18n("—")
+        if (Plasmoid.configuration.tempUnit === "F")
+            return i18n("%1°F", Math.round(c * 9 / 5 + 32))
+        return i18n("%1°C", c)
+    }
+
     function gfxLabel(mode) {
         if (mode === "Integrated") return i18n("Integrated")
         if (mode === "Hybrid") return i18n("Hybrid")
@@ -345,15 +355,21 @@ PlasmoidItem {
     toolTipMainText: i18n("Power Deck — %1", dataFor(currentProfile).name)
     toolTipSubText: {
         var line1 = i18n("CPU %1 · GPU %2 · %3 Hz",
-            cpuTemp >= 0 ? i18n("%1°C", cpuTemp) : i18n("—"),
-            gpuTemp >= 0 ? i18n("%1°C", gpuTemp) : i18n("—"),
+            formatTemp(cpuTemp),
+            formatTemp(gpuTemp),
             refreshCurrentHz)
+        if (cpuWatts >= 0 || gpuWatts >= 0) {
+            line1 += i18n(" · %1 / %2",
+                cpuWatts >= 0 ? i18n("%1 W", cpuWatts) : i18n("—"),
+                gpuWatts >= 0 ? i18n("%1 W", gpuWatts) : i18n("—"))
+        }
         if (batteryPercent < 0) return line1
         var line2
         if (batteryState === "charging") {
             line2 = batteryMinutes >= 0
                 ? i18n("Battery %1% — charging, %2 to full", batteryPercent, formatMinutes(batteryMinutes))
                 : i18n("Battery %1% — charging", batteryPercent)
+            if (batteryWatts >= 0) line2 += i18n(" · +%1 W", batteryWatts)
         } else if (batteryState === "discharging") {
             line2 = batteryMinutes >= 0
                 ? i18n("Battery %1% — %2 remaining", batteryPercent, formatMinutes(batteryMinutes))
@@ -903,71 +919,8 @@ PlasmoidItem {
         onTriggered: { isSwitching = false }
     }
 
-    compactRepresentation: Item {
-        id: compactRoot
-        implicitWidth: compactRow.implicitWidth + Kirigami.Units.largeSpacing * 2
-        implicitHeight: Kirigami.Units.gridUnit * 1.75
-        Layout.minimumWidth: implicitWidth
-        Layout.preferredWidth: implicitWidth
-
-        MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            onClicked: root.expanded = !root.expanded
-            onWheel: function(wheel) {
-                if (wheel.angleDelta.y > 0) cycleProfile(-1)
-                else cycleProfile(1)
-            }
-
-            RowLayout {
-                id: compactRow
-                anchors.centerIn: parent
-                spacing: Kirigami.Units.smallSpacing
-
-                // 0 = icon, 1 = icon + profile, 2 = icon + battery,
-                // 3 = icon + profile + battery
-                readonly property int mode: Plasmoid.configuration.compactMode
-                readonly property bool showProfile: mode === 1 || mode === 3
-                readonly property bool showBattery: (mode === 2 || mode === 3)
-                    && root.batteryPercent >= 0
-
-                // Native vector glyph painted directly in the profile accent,
-                // so the panel icon stays crisp and follows the active theme
-                // (full color normally, grayscale in monochrome) instead of
-                // being flattened to a single panel tint.
-                ProfileGlyph {
-                    readonly property int iconSize: Math.round(
-                        Math.min(compactRoot.height, Kirigami.Units.gridUnit * 2) * 0.92)
-                    Layout.preferredWidth: iconSize
-                    Layout.preferredHeight: iconSize
-                    Layout.alignment: Qt.AlignVCenter
-                    kind: glyphKind(currentProfile)
-                    glyphColor: dataFor(currentProfile).accent
-                    glyphSize: iconSize
-                    active: true
-                }
-
-                PC3.Label {
-                    visible: compactRow.showProfile
-                    text: dataFor(currentProfile).label
-                    color: Kirigami.Theme.textColor
-                    font.weight: Font.DemiBold
-                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    horizontalAlignment: Text.AlignLeft
-                }
-
-                PC3.Label {
-                    visible: compactRow.showBattery
-                    text: i18n("%1%", root.batteryPercent)
-                    // green while charging/plugged, red when low on battery
-                    color: root.onAC ? Theme.green
-                        : (root.batteryPercent <= 20 ? Theme.redBright : Kirigami.Theme.textColor)
-                    font.weight: Font.DemiBold
-                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    Behavior on color { ColorAnimation { duration: Theme.durMed } }
-                }
-            }
-        }
+    compactRepresentation: CompactRepresentation {
+        deck: root
     }
 
     fullRepresentation: PlasmaExtras.Representation {
@@ -1098,10 +1051,12 @@ PlasmoidItem {
 
                         Rectangle {
                             id: drawPill
-                            visible: root.batteryState === "discharging" && root.batteryWatts >= 0
-                            readonly property color drainColor: root.batteryWatts >= 35 ? Theme.red
-                                : root.batteryWatts >= 20 ? Theme.amber
-                                : Theme.green
+                            visible: (root.batteryState === "discharging"
+                                      || root.batteryState === "charging")
+                                && root.batteryWatts >= 0
+                            readonly property bool charging: root.batteryState === "charging"
+                            readonly property color drainColor: Theme.batteryFlowColor(
+                                root.batteryState, root.batteryWatts)
                             implicitWidth: drawRow.implicitWidth + Kirigami.Units.largeSpacing * 2
                             Layout.fillWidth: false
                             Layout.preferredWidth: implicitWidth
@@ -1120,7 +1075,7 @@ PlasmoidItem {
                                 spacing: Kirigami.Units.smallSpacing
 
                                 PC3.Label {
-                                    text: i18n("DRAW")
+                                    text: drawPill.charging ? i18n("CHARGE") : i18n("DRAW")
                                     color: Kirigami.Theme.disabledTextColor
                                     font.weight: Font.DemiBold
                                     font.letterSpacing: 1.2

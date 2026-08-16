@@ -92,4 +92,24 @@ QtObject {
     function alpha(c, a) {
         return Qt.rgba(c.r, c.g, c.b, a)
     }
+
+    // Temperature tint used by the popup pills and the panel metrics.
+    function heatColor(temp) {
+        if (temp < 0) return muted
+        if (temp >= 85) return red
+        if (temp >= 70) return amber
+        return teal
+    }
+
+    // Charge/discharge rate: green while filling, then green → amber → red
+    // as battery drain climbs (same thresholds as the header DRAW pill).
+    function batteryFlowColor(state, watts) {
+        if (state === "charging") return green
+        if (state === "discharging") {
+            if (watts >= 35) return red
+            if (watts >= 20) return amber
+            return green
+        }
+        return muted
+    }
 }

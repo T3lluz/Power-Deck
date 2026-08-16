@@ -1,6 +1,8 @@
 singleton Theme 1.0 Theme.qml
 AnimeChip 1.0 AnimeChip.qml
 AnimeGlyph 1.0 AnimeGlyph.qml
+CompactRepresentation 1.0 CompactRepresentation.qml
+MetricIcon 1.0 MetricIcon.qml
 ProfileCard 1.0 ProfileCard.qml
 ProfileGlyph 1.0 ProfileGlyph.qml
 ProfileIconBadge 1.0 ProfileIconBadge.qml

@@ -4,9 +4,72 @@
       xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0 http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
   <kcfgfile name=""/>
   <group name="General">
-    <entry name="compactMode" type="Int">
-      <label>Panel display: 0=icon, 1=icon+profile, 2=icon+battery, 3=icon+profile+battery</label>
-      <default>1</default>
+    <!-- 0 = icons + values, 1 = values only, 2 = icons only -->
+    <entry name="displayMode" type="Int">
+      <label>Panel display style</label>
+      <default>0</default>
+      <min>0</min>
+      <max>2</max>
+    </entry>
+    <entry name="showIcon" type="Bool">
+      <label>Show profile icon in the panel</label>
+      <default>true</default>
+    </entry>
+    <entry name="showProfile" type="Bool">
+      <label>Show profile name in the panel</label>
+      <default>true</default>
+    </entry>
+    <entry name="showCpuTemp" type="Bool">
+      <label>Show CPU temperature in the panel</label>
+      <default>true</default>
+    </entry>
+    <entry name="showGpuTemp" type="Bool">
+      <label>Show GPU temperature in the panel</label>
+      <default>true</default>
+    </entry>
+    <entry name="showCpuWatts" type="Bool">
+      <label>Show CPU package power in the panel</label>
+      <default>false</default>
+    </entry>
+    <entry name="showGpuWatts" type="Bool">
+      <label>Show GPU power in the panel</label>
+      <default>false</default>
+    </entry>
+    <entry name="showBattery" type="Bool">
+      <label>Show battery percent in the panel</label>
+      <default>false</default>
+    </entry>
+    <entry name="showBatteryWatts" type="Bool">
+      <label>Show battery charge/discharge watts in the panel</label>
+      <default>true</default>
+    </entry>
+    <entry name="showBatteryTime" type="Bool">
+      <label>Show battery time remaining / time to full in the panel</label>
+      <default>false</default>
+    </entry>
+    <entry name="showFans" type="Bool">
+      <label>Show fan speeds in the panel</label>
+      <default>false</default>
+    </entry>
+    <entry name="showRefresh" type="Bool">
+      <label>Show refresh rate in the panel</label>
+      <default>false</default>
+    </entry>
+    <entry name="showSeparators" type="Bool">
+      <label>Show dot separators between panel metrics</label>
+      <default>true</default>
+    </entry>
+    <entry name="showMiniBars" type="Bool">
+      <label>Show inline progress bars next to panel values</label>
+      <default>false</default>
+    </entry>
+    <entry name="metricOrder" type="String">
+      <label>Comma-separated panel metric order</label>
+      <default>profile,cpuTemp,gpuTemp,cpuWatts,gpuWatts,battery,batteryWatts,batteryTime,fans,refresh</default>
+    </entry>
+    <entry name="tempUnit" type="String">
+      <label>Temperature unit (C or F)</label>
+      <default>C</default>
     </entry>
     <entry name="showNotifications" type="Bool">
       <label>Show notifications on profile and power changes</label>
