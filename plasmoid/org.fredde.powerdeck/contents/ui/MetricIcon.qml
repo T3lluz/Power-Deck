@@ -15,9 +15,35 @@ Item {
     property color color: Kirigami.Theme.textColor
     property real strokeWidth: 1.6
     property real contentScale: 0.8
+    // Outlined bolt on the right of the battery while charging.
+    property bool charging: false
+    property color boltColor: "#ffffff"
 
     implicitWidth: Kirigami.Units.iconSizes.small
     implicitHeight: Kirigami.Units.iconSizes.small
+
+    // Uniform scale around the 24×24 center. CPU already fills the
+    // box; the others sit smaller in the same artboard so they get a bump.
+    function kindScale(kind) {
+        switch (kind) {
+            case "cpu":        return 1.0
+            case "gpu":        return 1.32
+            case "battery":    return 1.38
+            case "watt":       return 1.26
+            case "fan":        return 1.26
+            case "hz":         return 1.38
+            case "clock":      return 1.26
+            case "profile":    return 1.34
+            case "charge":
+            case "discharge":  return 1.08
+            case "text":
+            case "dots":
+            case "bars":
+            case "bell":
+            case "both":       return 1.14
+        }
+        return 1.0
+    }
 
     Canvas {
         id: cv
@@ -34,6 +60,12 @@ Item {
             ctx.translate((width  - 24 * scale) / 2,
                           (height - 24 * scale) / 2)
             ctx.scale(scale, scale)
+            // Grow the original 24×24 art uniformly so smaller glyphs
+            // match the CPU chip. Do not rewrite path aspect ratios.
+            var bump = root.kindScale(root.kind)
+            ctx.translate(12, 12)
+            ctx.scale(bump, bump)
+            ctx.translate(-12, -12)
 
             ctx.strokeStyle = root.color
             ctx.fillStyle   = root.color
@@ -109,15 +141,40 @@ Item {
         }
 
         function drawBattery(ctx) {
+            // Same cell as idle; charging drops the nub and layers an
+            // outlined bolt on the right.
             roundRect(ctx, 2.5, 7, 16.5, 10, 2.2)
             ctx.stroke()
-            ctx.lineWidth = 2
-            ctx.beginPath()
-            ctx.moveTo(21, 10.5)
-            ctx.lineTo(21, 13.5)
-            ctx.stroke()
+            if (!root.charging) {
+                ctx.lineWidth = 2
+                ctx.beginPath()
+                ctx.moveTo(21, 10.5)
+                ctx.lineTo(21, 13.5)
+                ctx.stroke()
+            }
             roundRect(ctx, 4.9, 9.4, 8.7, 5.2, 1.3)
             ctx.fill()
+            if (root.charging)
+                drawPixelBolt(ctx)
+        }
+
+        // Compact outlined bolt on the right of the cell (Pixel placement,
+        // stroke only so it stays white against the tinted battery).
+        function drawPixelBolt(ctx) {
+            var x = 14.4, y = 7.15, w = 5.6, h = 9.7
+            ctx.beginPath()
+            ctx.moveTo(x + w * 0.58, y)
+            ctx.lineTo(x + w * 0.04, y + h * 0.50)
+            ctx.lineTo(x + w * 0.40, y + h * 0.50)
+            ctx.lineTo(x + w * 0.34, y + h)
+            ctx.lineTo(x + w * 0.96, y + h * 0.41)
+            ctx.lineTo(x + w * 0.52, y + h * 0.41)
+            ctx.closePath()
+            ctx.strokeStyle = root.boltColor
+            ctx.lineWidth = 1.7
+            ctx.lineJoin = "round"
+            ctx.lineCap = "round"
+            ctx.stroke()
         }
 
         function drawCharge(ctx) {
@@ -275,6 +332,8 @@ Item {
 
     onColorChanged: cv.requestPaint()
     onKindChanged: cv.requestPaint()
+    onChargingChanged: cv.requestPaint()
+    onBoltColorChanged: cv.requestPaint()
     onContentScaleChanged: cv.requestPaint()
     onWidthChanged: cv.requestPaint()
     onHeightChanged: cv.requestPaint()

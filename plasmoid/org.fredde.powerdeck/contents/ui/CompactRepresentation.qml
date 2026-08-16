@@ -34,9 +34,9 @@ Item {
     readonly property bool showValues: displayMode !== 2
     readonly property bool sepsOn: Plasmoid.configuration.showSeparators
 
-    readonly property bool vIcon: Plasmoid.configuration.showIcon || !root.anyOther
+    readonly property bool vIcon: (Plasmoid.configuration.showIcon || !root.anyOther) && root.showIcons
     readonly property bool vName: Plasmoid.configuration.showProfile && root.showValues
-    readonly property bool vProfileGroup: vIcon || vName
+    readonly property bool vProfileGroup: vIcon || vName || !root.anyOther
     readonly property bool vCpuTemp: Plasmoid.configuration.showCpuTemp && root.deck.cpuTemp >= 0
     readonly property bool vGpuTemp: Plasmoid.configuration.showGpuTemp && root.deck.gpuTemp >= 0
     readonly property bool vCpuWatts: Plasmoid.configuration.showCpuWatts && root.deck.cpuWatts >= 0
@@ -69,18 +69,25 @@ Item {
         deck.currentProfile, deck.cpuTemp, deck.gpuTemp, deck.cpuWatts, deck.gpuWatts,
         deck.batteryPercent, deck.batteryWatts, deck.batteryState, deck.batteryMinutes,
         deck.fanCpuRpm, deck.fanGpuRpm, deck.refreshCurrentHz,
-        showIcons, showValues, Plasmoid.configuration.tempUnit
+        showIcons, showValues, Plasmoid.configuration.tempUnit,
+        Plasmoid.configuration.showChargeBolt, Plasmoid.configuration.batteryWarnLow,
+        Plasmoid.configuration.batteryLowPercent
     ].join("|")
 
     readonly property int panelIconSize: Math.round(
         Math.min(isVertical ? width : height, Kirigami.Units.gridUnit * 2) * 0.92)
 
+    readonly property int batLowAt: Plasmoid.configuration.batteryLowPercent
+
+    // Battery % / time icon: stay on the charge tint (never panel-white).
+    // Red only while discharging at or under the configured floor.
     readonly property color batPctColor: {
-        if (deck.batteryState === "charging" || deck.onAC)
-            return Theme.green
-        if (deck.batteryPercent <= 20)
+        if (Plasmoid.configuration.batteryWarnLow
+            && deck.batteryPercent >= 0
+            && deck.batteryPercent <= root.batLowAt
+            && deck.batteryState !== "charging")
             return Theme.red
-        return Kirigami.Theme.textColor
+        return Theme.iconCharge
     }
 
     readonly property string batFlowText: {
@@ -181,6 +188,7 @@ Item {
 
     function slotKind(id) {
         switch (id) {
+        case "profile": return "profile"
         case "cpuTemp": return "cpu"
         case "gpuTemp": return "gpu"
         case "cpuWatts":
@@ -194,8 +202,35 @@ Item {
         return "cpu"
     }
 
+    function slotGlyphKind(id, stamp) {
+        if (id === "profile")
+            return deck.glyphKind(deck.currentProfile)
+        return ""
+    }
+
+    function slotShowIcon(id) {
+        if (id === "profile")
+            return root.vIcon || (!root.vName && !root.anyOther)
+        return root.showIcons
+    }
+
+    function slotShowValue(id) {
+        if (id === "profile")
+            return root.vName
+        return root.showValues
+    }
+
+    function slotShowBolt(id) {
+        if (!Plasmoid.configuration.showChargeBolt)
+            return false
+        if (id !== "battery" && id !== "batteryTime")
+            return false
+        return deck.batteryState === "charging"
+    }
+
     function slotText(id, stamp) {
         switch (id) {
+        case "profile": return deck.dataFor(deck.currentProfile).label
         case "cpuTemp": return deck.formatTemp(deck.cpuTemp)
         case "gpuTemp": return deck.formatTemp(deck.gpuTemp)
         case "cpuWatts": return i18n("%1 W", deck.cpuWatts)
@@ -211,6 +246,7 @@ Item {
 
     function slotAccent(id, stamp) {
         switch (id) {
+        case "profile": return deck.dataFor(deck.currentProfile).accent
         case "cpuTemp": return Theme.heatColor(deck.cpuTemp)
         case "gpuTemp": return Theme.heatColor(deck.gpuTemp)
         case "cpuWatts": return Theme.teal
@@ -262,39 +298,15 @@ Item {
                     }
                 }
 
-                ProfileGlyph {
-                    visible: hSlot.modelData === "profile" && root.vIcon
-                    readonly property int iconSize: root.panelIconSize
-                    Layout.preferredWidth: iconSize
-                    Layout.preferredHeight: iconSize
-                    Layout.alignment: Qt.AlignVCenter
-                    kind: root.deck.glyphKind(root.deck.currentProfile)
-                    glyphColor: root.deck.dataFor(root.deck.currentProfile).accent
-                    glyphSize: iconSize
-                    active: true
-                }
-
-                Text {
-                    visible: hSlot.modelData === "profile" && root.vName
-                    text: {
-                        var _ = root.dataStamp
-                        return root.deck.dataFor(root.deck.currentProfile).label
-                    }
-                    color: Kirigami.Theme.textColor
-                    font.weight: Font.DemiBold
-                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    renderType: Text.NativeRendering
-                    Layout.alignment: Qt.AlignVCenter
-                }
-
                 Metric {
-                    visible: hSlot.modelData !== "profile"
                     kind: root.slotKind(hSlot.modelData)
+                    glyphKind: root.slotGlyphKind(hSlot.modelData, root.dataStamp)
                     valueText: root.slotText(hSlot.modelData, root.dataStamp)
                     accent: root.slotAccent(hSlot.modelData, root.dataStamp)
                     percent: root.slotPercent(hSlot.modelData, root.dataStamp)
-                    showIcon: root.showIcons
-                    showValue: root.showValues
+                    showIcon: root.slotShowIcon(hSlot.modelData)
+                    showValue: root.slotShowValue(hSlot.modelData)
+                    charging: root.slotShowBolt(hSlot.modelData)
                 }
             }
         }
@@ -329,38 +341,14 @@ Item {
                     }
                 }
 
-                ProfileGlyph {
-                    visible: vSlot.modelData === "profile" && root.vIcon
-                    readonly property int iconSize: root.panelIconSize
-                    Layout.preferredWidth: iconSize
-                    Layout.preferredHeight: iconSize
-                    Layout.alignment: Qt.AlignHCenter
-                    kind: root.deck.glyphKind(root.deck.currentProfile)
-                    glyphColor: root.deck.dataFor(root.deck.currentProfile).accent
-                    glyphSize: iconSize
-                    active: true
-                }
-
-                Text {
-                    visible: vSlot.modelData === "profile" && root.vName
-                    Layout.alignment: Qt.AlignHCenter
-                    text: {
-                        var _ = root.dataStamp
-                        return root.deck.dataFor(root.deck.currentProfile).label
-                    }
-                    color: Kirigami.Theme.textColor
-                    font.weight: Font.DemiBold
-                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    renderType: Text.NativeRendering
-                }
-
                 VMetric {
-                    visible: vSlot.modelData !== "profile"
                     kind: root.slotKind(vSlot.modelData)
+                    glyphKind: root.slotGlyphKind(vSlot.modelData, root.dataStamp)
                     valueText: root.slotText(vSlot.modelData, root.dataStamp)
                     accent: root.slotAccent(vSlot.modelData, root.dataStamp)
-                    showIcon: root.showIcons
-                    showValue: root.showValues
+                    showIcon: root.slotShowIcon(vSlot.modelData)
+                    showValue: root.slotShowValue(vSlot.modelData)
+                    charging: root.slotShowBolt(vSlot.modelData)
                 }
             }
         }
@@ -418,17 +406,39 @@ Item {
         required property string kind
         required property string valueText
         required property color accent
+        property string glyphKind: ""
         property real percent: -1
         property bool showIcon: true
         property bool showValue: true
+        property bool charging: false
 
         Layout.alignment: Qt.AlignVCenter
         spacing: Kirigami.Units.smallSpacing
 
         MetricIcon {
-            visible: m.showIcon
+            visible: m.showIcon && m.glyphKind.length === 0
             kind: m.kind
             color: m.accent
+            charging: m.charging
+            boltColor: Kirigami.Theme.textColor
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth: root.panelIconSize
+            Layout.preferredHeight: root.panelIconSize
+        }
+
+        ProfileGlyph {
+            visible: m.showIcon && m.glyphKind.length > 0
+            kind: m.glyphKind
+            glyphColor: m.accent
+            glyphSize: root.panelIconSize
+            contentScale: 0.8
+            opticalScale: {
+                var k = kind
+                if (k === "performance") return 1.08
+                if (k === "extreme") return 1.17
+                return 1.34
+            }
+            active: true
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth: root.panelIconSize
             Layout.preferredHeight: root.panelIconSize
@@ -466,16 +476,38 @@ Item {
         required property string kind
         required property string valueText
         required property color accent
+        property string glyphKind: ""
         property bool showIcon: true
         property bool showValue: true
+        property bool charging: false
 
         Layout.alignment: Qt.AlignHCenter
         spacing: 0
 
         MetricIcon {
-            visible: vm.showIcon
+            visible: vm.showIcon && vm.glyphKind.length === 0
             kind: vm.kind
             color: vm.accent
+            charging: vm.charging
+            boltColor: Kirigami.Theme.textColor
+            Layout.alignment: Qt.AlignHCenter
+            Layout.preferredWidth: root.panelIconSize
+            Layout.preferredHeight: root.panelIconSize
+        }
+
+        ProfileGlyph {
+            visible: vm.showIcon && vm.glyphKind.length > 0
+            kind: vm.glyphKind
+            glyphColor: vm.accent
+            glyphSize: root.panelIconSize
+            contentScale: 0.8
+            opticalScale: {
+                var k = kind
+                if (k === "performance") return 1.08
+                if (k === "extreme") return 1.17
+                return 1.34
+            }
+            active: true
             Layout.alignment: Qt.AlignHCenter
             Layout.preferredWidth: root.panelIconSize
             Layout.preferredHeight: root.panelIconSize

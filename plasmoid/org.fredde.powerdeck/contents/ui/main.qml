@@ -253,7 +253,7 @@ PlasmoidItem {
 
     readonly property var profileData: ({
         "extreme": {
-            label: i18n("EXTREME"),
+            label: i18n("Extreme"),
             name: i18n("Extreme Saver"),
             desc: i18n("60 Hz · max savings"),
             icon: Qt.resolvedUrl("../images/extreme.svg"),
@@ -261,7 +261,7 @@ PlasmoidItem {
             burst: "pulse"
         },
         "power": {
-            label: i18n("POWER"),
+            label: i18n("Power"),
             name: i18n("Power Saver"),
             desc: i18n("Low power · quiet"),
             icon: Qt.resolvedUrl("../images/power.svg"),
@@ -269,7 +269,7 @@ PlasmoidItem {
             burst: "charge"
         },
         "balanced": {
-            label: i18n("BALANCED"),
+            label: i18n("Balanced"),
             name: i18n("Balanced"),
             desc: i18n("Everyday use"),
             icon: Qt.resolvedUrl("../images/balanced.svg"),
@@ -277,7 +277,7 @@ PlasmoidItem {
             burst: "sweep"
         },
         "performance": {
-            label: i18n("PERFORMANCE"),
+            label: i18n("Performance"),
             name: i18n("Performance"),
             desc: i18n("Max performance"),
             icon: Qt.resolvedUrl("../images/performance.svg"),

@@ -71,6 +71,20 @@
       <label>Temperature unit (C or F)</label>
       <default>C</default>
     </entry>
+    <entry name="showChargeBolt" type="Bool">
+      <label>Show a charging bolt on the battery percent icon</label>
+      <default>true</default>
+    </entry>
+    <entry name="batteryWarnLow" type="Bool">
+      <label>Tint the battery percent icon red when low</label>
+      <default>true</default>
+    </entry>
+    <entry name="batteryLowPercent" type="Int">
+      <label>Battery percent at or below which the icon turns red</label>
+      <default>30</default>
+      <min>5</min>
+      <max>60</max>
+    </entry>
     <entry name="showNotifications" type="Bool">
       <label>Show notifications on profile and power changes</label>
       <default>true</default>

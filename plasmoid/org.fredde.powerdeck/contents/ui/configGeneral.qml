@@ -23,6 +23,9 @@ KCM.SimpleKCM {
     property bool cfg_showMiniBars
     property string cfg_metricOrder
     property string cfg_tempUnit
+    property bool cfg_showChargeBolt
+    property bool cfg_batteryWarnLow
+    property int cfg_batteryLowPercent
     property bool cfg_showNotifications
     property bool cfg_monochrome
     property int cfg_monoAccent
@@ -88,7 +91,8 @@ KCM.SimpleKCM {
         cfg_showIcon, cfg_showProfile, cfg_showCpuTemp, cfg_showGpuTemp,
         cfg_showCpuWatts, cfg_showGpuWatts, cfg_showBattery, cfg_showBatteryWatts,
         cfg_showBatteryTime, cfg_showFans, cfg_showRefresh,
-        cfg_showSeparators, cfg_showMiniBars, cfg_showNotifications, cfg_monochrome
+        cfg_showSeparators, cfg_showMiniBars, cfg_showNotifications, cfg_monochrome,
+        cfg_showChargeBolt, cfg_batteryWarnLow, cfg_batteryLowPercent
     ].join(",")
 
     ListModel { id: orderModel }
@@ -656,6 +660,98 @@ KCM.SimpleKCM {
             QQC2.Label {
                 Layout.fillWidth: true
                 text: i18n("Tap a tile to show or hide it. Profile icon and name stay together when you reorder. Missing readings hide themselves on the panel.")
+                color: Kirigami.Theme.disabledTextColor
+                font: Kirigami.Theme.smallFont
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        SectionCard {
+            title: i18n("BATTERY")
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                MetricIcon {
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                    kind: "battery"
+                    color: "#34d399"
+                    charging: root.cfg_showChargeBolt
+                    boltColor: Kirigami.Theme.textColor
+                }
+
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    text: i18n("Charging bolt")
+                    font.weight: Font.DemiBold
+                }
+
+                QQC2.Switch {
+                    checked: root.cfg_showChargeBolt
+                    onToggled: root.cfg_showChargeBolt = checked
+                }
+            }
+
+            QQC2.Label {
+                Layout.fillWidth: true
+                text: i18n("Outlined bolt on the battery percent and time icons while charging. Battery watts stay a plain cell.")
+                color: Kirigami.Theme.disabledTextColor
+                font: Kirigami.Theme.smallFont
+                wrapMode: Text.WordWrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                MetricIcon {
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                    kind: "battery"
+                    color: root.cfg_batteryWarnLow ? "#f2596a" : "#34d399"
+                }
+
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    text: i18n("Warn when low")
+                    font.weight: Font.DemiBold
+                }
+
+                QQC2.Switch {
+                    checked: root.cfg_batteryWarnLow
+                    onToggled: root.cfg_batteryWarnLow = checked
+                }
+            }
+
+            QQC2.Label {
+                Layout.fillWidth: true
+                visible: root.cfg_batteryWarnLow
+                text: i18n("Low at")
+                color: root.muted
+                font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                font.weight: Font.DemiBold
+            }
+
+            QQC2.SpinBox {
+                Layout.fillWidth: true
+                visible: root.cfg_batteryWarnLow
+                from: 5
+                to: 60
+                stepSize: 5
+                value: root.cfg_batteryLowPercent
+                onValueModified: root.cfg_batteryLowPercent = value
+                textFromValue: function(value, locale) { return i18n("%1%", value) }
+                valueFromText: function(text, locale) {
+                    var n = parseInt(text.replace(/[^0-9]/g, ""), 10)
+                    return isNaN(n) ? root.cfg_batteryLowPercent : n
+                }
+            }
+
+            QQC2.Label {
+                Layout.fillWidth: true
+                text: i18n("Battery percent and time icons stay green, and turn red at or below this level while discharging. They never fall back to plain white.")
                 color: Kirigami.Theme.disabledTextColor
                 font: Kirigami.Theme.smallFont
                 wrapMode: Text.WordWrap

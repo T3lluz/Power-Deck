@@ -21,6 +21,10 @@ Item {
     property string kind: "balanced"
     property color glyphColor: Theme.blue
     property real glyphSize: 22
+    // Match MetricIcon's inset when drawn in the panel (1.0 = fill the box).
+    property real contentScale: 1.0
+    // Extra uniform scale for the panel so the original art matches the CPU chip.
+    property real opticalScale: 1.0
     // dims the glyph a touch when its profile is not the active one
     property bool active: true
 
@@ -63,7 +67,7 @@ Item {
         width: 24
         height: 24
         anchors.centerIn: parent
-        scale: glyph.glyphSize / 24
+        scale: glyph.glyphSize * glyph.contentScale * glyph.opticalScale / 24
         transformOrigin: Item.Center
 
         // ===================== BALANCED =====================
