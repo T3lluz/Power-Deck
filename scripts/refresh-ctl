@@ -150,6 +150,11 @@ extreme_active() {
     [ -z "$ppd" ] || [ "$ppd" = "power-saver" ]
 }
 
+# Performance keeps the high panel rate even on battery (all-out mode).
+performance_active() {
+    [ "$(cat "$PROFILE_FILE" 2>/dev/null)" = "performance" ]
+}
+
 desired() {
     case "$(saved_mode)" in
         low)  echo low ;;
@@ -157,6 +162,8 @@ desired() {
         auto)
             if extreme_active; then
                 echo low
+            elif performance_active; then
+                echo high
             elif on_ac; then
                 echo high
             else

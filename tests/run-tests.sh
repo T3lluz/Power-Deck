@@ -178,6 +178,19 @@ check "extreme seeds as custom" \
     grep -qx custom "$fan_sandbox/fans/extreme"
 check "power seeds as firmware" \
     grep -qx firmware "$fan_sandbox/fans/power"
+check "balanced seeds as custom" \
+    grep -qx custom "$fan_sandbox/fans/balanced"
+check "performance seeds as custom" \
+    grep -qx custom "$fan_sandbox/fans/performance"
+
+bal_cpu=$(awk '/^cpu /{print $2}' "$fan_sandbox/fans/balanced")
+perf_cpu=$(awk '/^cpu /{print $2}' "$fan_sandbox/fans/performance")
+stock_cpu="50:1,55:13,60:30,64:32,74:44,78:51,82:59,97:100"
+cool_cpu="40:10,50:25,58:40,65:55,72:70,80:85,88:95,97:100"
+check "balanced seeds the stock curve" \
+    test "$bal_cpu" = "$stock_cpu"
+check "performance seeds the cool curve" \
+    test "$perf_cpu" = "$cool_cpu"
 
 ext_cpu=$(awk '/^cpu /{print $2}' "$fan_sandbox/fans/extreme")
 pwr_cpu=$(awk '/^cpu /{print $2}' "$fan_sandbox/fans/power")

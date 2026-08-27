@@ -5,8 +5,9 @@
 # extreme     power-saver profile + low panel refresh rate,
 #             wifi powersave, PCIe ASPM powersave
 # power       power-saver profile, normal extras
-# balanced    balanced profile, normal extras
-# performance performance profile, normal extras
+# balanced    balanced profile; AC = snappy extras + EPP balance_performance,
+#             battery = Wi-Fi/ASPM powersave (decent battery, still responsive)
+# performance performance profile, dGPU pinned awake, always-high refresh
 #
 # Each mode has its own fan curve (fan-ctl). Extreme and Power Saver
 # share the firmware LowPower slot, so the stored curve is rewritten
@@ -26,6 +27,27 @@ PLAT_IFACE="xyz.ljones.Platform"
 
 mkdir -p "$STATE_DIR"
 
+# Same AC detection as refresh-ctl / anime-power-watch.
+on_ac() {
+    local ps type online status
+    for ps in /sys/class/power_supply/*; do
+        [ -e "$ps" ] || continue
+        type="$(cat "$ps/type" 2>/dev/null)"
+        online="$(cat "$ps/online" 2>/dev/null)"
+        case "$type" in
+            Mains|USB*) [ "$online" = "1" ] && return 0 ;;
+        esac
+    done
+    for ps in /sys/class/power_supply/*; do
+        [ "$(cat "$ps/type" 2>/dev/null)" = "Battery" ] || continue
+        status="$(cat "$ps/status" 2>/dev/null)"
+        case "$status" in
+            Charging|Full|"Not charging") return 0 ;;
+        esac
+    done
+    return 1
+}
+
 # Power Deck owns the platform profile. asusd's AC/battery auto-switch
 # would yank Extreme/Balanced to Performance on plug-in and undo the
 # per-mode fan curve after login.
@@ -42,6 +64,30 @@ apply_fans() {
     "$FAN_CTL" apply "$1" >/dev/null 2>&1 || true
 }
 
+# Re-apply the root-helper knobs for the saved mode. Used on profile
+# switch and by anime-power-watch on plug/unplug (balanced AC vs batt).
+apply_helper() {
+    local mode="$1"
+    case "$mode" in
+        extreme)
+            sudo -n "$HELPER" extreme
+            ;;
+        power)
+            sudo -n "$HELPER" normal
+            ;;
+        balanced)
+            if on_ac; then
+                sudo -n "$HELPER" balanced-ac
+            else
+                sudo -n "$HELPER" balanced-batt
+            fi
+            ;;
+        performance)
+            sudo -n "$HELPER" performance
+            ;;
+    esac
+}
+
 set_profile() {
     local mode="$1"
     # Save first: refresh-ctl reads this file to make "auto" profile-aware
@@ -51,23 +97,18 @@ set_profile() {
     case "$mode" in
         extreme)
             powerprofilesctl set power-saver
-            sudo -n "$HELPER" extreme
             ;;
         power)
             powerprofilesctl set power-saver
-            sudo -n "$HELPER" normal
             ;;
         balanced)
             powerprofilesctl set balanced
-            sudo -n "$HELPER" normal
             ;;
         performance)
             powerprofilesctl set performance
-            # Pin the dGPU awake (Hybrid + Performance) so it actually
-            # drives apps/games instead of staying runtime-suspended.
-            sudo -n "$HELPER" performance
             ;;
     esac
+    apply_helper "$mode"
     apply_fans "$mode"
     "$REFRESH_CTL" sync >/dev/null 2>&1
     echo "Profile set to: $mode"
@@ -96,6 +137,10 @@ get_status() {
 case "${1}" in
     extreme|power|balanced|performance)
         set_profile "$1"
+        ;;
+    helper-sync)
+        # Plug/unplug path: re-apply AC-aware extras without flipping PPD.
+        apply_helper "$(cat "$STATE_FILE" 2>/dev/null)"
         ;;
     status|current)
         get_status

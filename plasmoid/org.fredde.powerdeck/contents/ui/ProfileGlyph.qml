@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Shapes
+import QtQuick.Window
 
 // Vector profile glyph drawn from individually animatable parts so each
 // profile can play a smooth, calm motion that only touches the relevant
@@ -11,22 +12,22 @@ import QtQuick.Shapes
 // Everything is painted in `glyphColor`, so the monochrome theme turns the
 // whole glyph grayscale just by feeding it a neutral color.
 //
-// `layer.enabled` flattens all the parts into one surface *before* the
-// glyph's own opacity is applied, so overlapping shapes never composite
-// into a denser patch — the whole icon dims uniformly.
+// Art is 48×48 (2× the 24 grid) so Shapes tessellate before they are
+// scaled down. The layer texture follows the screen DPR so HiDPI stays
+// sharp. `layer.enabled` flattens parts before opacity so overlaps dim
+// uniformly.
 Item {
     id: glyph
 
-    // extreme | power | balanced | performance
     property string kind: "balanced"
     property color glyphColor: Theme.blue
     property real glyphSize: 22
-    // Match MetricIcon's inset when drawn in the panel (1.0 = fill the box).
     property real contentScale: 1.0
-    // Extra uniform scale for the panel so the original art matches the CPU chip.
     property real opticalScale: 1.0
-    // dims the glyph a touch when its profile is not the active one
     property bool active: true
+
+    readonly property real artSize: 48
+    readonly property real paintDpr: Math.max(1, Screen.devicePixelRatio) * 2
 
     implicitWidth: glyphSize
     implicitHeight: glyphSize
@@ -34,6 +35,9 @@ Item {
     opacity: active ? 1.0 : 0.55
     layer.enabled: true
     layer.smooth: true
+    layer.textureSize: Qt.size(
+        Math.max(1, Math.round(width * paintDpr)),
+        Math.max(1, Math.round(height * paintDpr)))
 
     Behavior on opacity { NumberAnimation { duration: Theme.durMed } }
     Behavior on glyphColor { ColorAnimation { duration: Theme.durMed } }
@@ -42,7 +46,6 @@ Item {
         return Qt.rgba(glyphColor.r, glyphColor.g, glyphColor.b, a)
     }
 
-    // Plays the part-level activation motion for the current profile.
     function play() {
         switch (kind) {
             case "balanced":    needleAnim.restart(); break
@@ -52,22 +55,19 @@ Item {
         }
     }
 
-    // animated state shared with the parts
-    property real needleAngle: 0          // balanced
-    // power: per-cell brightness, resting at a staggered "battery gauge" look
+    property real needleAngle: 0
     property real cellA: 1.0
     property real cellB: 0.6
     property real cellC: 0.3
-    property real boltGlow: 0             // performance
-    property real leafAngle: 0            // extreme
+    property real boltGlow: 0
+    property real leafAngle: 0
 
-    // ---- 24x24 design space, scaled to fit ----
     Item {
         id: design
-        width: 24
-        height: 24
+        width: glyph.artSize
+        height: glyph.artSize
         anchors.centerIn: parent
-        scale: glyph.glyphSize * glyph.contentScale * glyph.opticalScale / 24
+        scale: glyph.glyphSize * glyph.contentScale * glyph.opticalScale / glyph.artSize
         transformOrigin: Item.Center
 
         // ===================== BALANCED =====================
@@ -75,44 +75,41 @@ Item {
             anchors.fill: parent
             visible: glyph.kind === "balanced"
 
-            // dial arc (static)
             Shape {
                 anchors.fill: parent
                 antialiasing: true
                 ShapePath {
                     strokeColor: glyph.softColor(0.5)
-                    strokeWidth: 1.7
+                    strokeWidth: 3.4
                     fillColor: "transparent"
                     capStyle: ShapePath.RoundCap
-                    PathSvg { path: "M4 16.5 A8 8 0 0 1 20 16.5" }
+                    PathSvg { path: "M8 33 A16 16 0 0 1 40 33" }
                 }
             }
 
-            // needle (the only moving part)
             Shape {
                 anchors.fill: parent
                 antialiasing: true
                 transform: Rotation {
-                    origin.x: 12; origin.y: 16.5
+                    origin.x: 24; origin.y: 33
                     angle: glyph.needleAngle
                 }
                 ShapePath {
                     strokeColor: glyph.glyphColor
-                    strokeWidth: 1.9
+                    strokeWidth: 3.8
                     fillColor: "transparent"
                     capStyle: ShapePath.RoundCap
-                    PathSvg { path: "M12 16.5 L15.5 11.5" }
+                    PathSvg { path: "M24 33 L31 23" }
                 }
             }
 
-            // hub (static)
             Shape {
                 anchors.fill: parent
                 antialiasing: true
                 ShapePath {
                     strokeColor: "transparent"
                     fillColor: glyph.glyphColor
-                    PathSvg { path: "M10 16.5 A2 2 0 1 0 14 16.5 A2 2 0 1 0 10 16.5 Z" }
+                    PathSvg { path: "M20 33 A4 4 0 1 0 28 33 A4 4 0 1 0 20 33 Z" }
                 }
             }
 
@@ -135,53 +132,50 @@ Item {
             anchors.fill: parent
             visible: glyph.kind === "power"
 
-            // battery body + terminal (static)
             Shape {
                 anchors.fill: parent
                 antialiasing: true
                 ShapePath {
                     strokeColor: glyph.glyphColor
-                    strokeWidth: 1.7
+                    strokeWidth: 3.4
                     fillColor: "transparent"
                     capStyle: ShapePath.RoundCap
                     joinStyle: ShapePath.RoundJoin
-                    PathSvg { path: "M5 7 L16.5 7 A2.5 2.5 0 0 1 19 9.5 L19 14.5 A2.5 2.5 0 0 1 16.5 17 L5 17 A2.5 2.5 0 0 1 2.5 14.5 L2.5 9.5 A2.5 2.5 0 0 1 5 7 Z" }
+                    PathSvg { path: "M10 14 L33 14 A5 5 0 0 1 38 19 L38 29 A5 5 0 0 1 33 34 L10 34 A5 5 0 0 1 5 29 L5 19 A5 5 0 0 1 10 14 Z" }
                 }
                 ShapePath {
                     strokeColor: glyph.glyphColor
-                    strokeWidth: 2
+                    strokeWidth: 4
                     capStyle: ShapePath.RoundCap
-                    PathSvg { path: "M21 10.5 L21 13.5" }
+                    PathSvg { path: "M42 21 L42 27" }
                 }
             }
 
-            // three charge cells that light up one by one, then settle back
-            // to the staggered resting gauge
             Rectangle {
-                x: 4.9; y: 9.8; width: 3; height: 4.4; radius: 0.9
+                x: 9.8; y: 19.6; width: 6; height: 8.8; radius: 1.8
+                antialiasing: true
                 color: glyph.softColor(glyph.cellA)
             }
             Rectangle {
-                x: 9.3; y: 9.8; width: 3; height: 4.4; radius: 0.9
+                x: 18.6; y: 19.6; width: 6; height: 8.8; radius: 1.8
+                antialiasing: true
                 color: glyph.softColor(glyph.cellB)
             }
             Rectangle {
-                x: 13.7; y: 9.8; width: 3; height: 4.4; radius: 0.9
+                x: 27.4; y: 19.6; width: 6; height: 8.8; radius: 1.8
+                antialiasing: true
                 color: glyph.softColor(glyph.cellC)
             }
 
             SequentialAnimation {
                 id: chargeAnim
-                // start empty
                 PropertyAction { target: glyph; property: "cellA"; value: 0.12 }
                 PropertyAction { target: glyph; property: "cellB"; value: 0.12 }
                 PropertyAction { target: glyph; property: "cellC"; value: 0.12 }
-                // fill each cell in turn
                 NumberAnimation { target: glyph; property: "cellA"; to: 1; duration: 200; easing.type: Easing.OutCubic }
                 NumberAnimation { target: glyph; property: "cellB"; to: 1; duration: 200; easing.type: Easing.OutCubic }
                 NumberAnimation { target: glyph; property: "cellC"; to: 1; duration: 200; easing.type: Easing.OutCubic }
                 PauseAnimation { duration: 240 }
-                // settle smoothly back to the original staggered look
                 ParallelAnimation {
                     NumberAnimation { target: glyph; property: "cellA"; to: 1.0; duration: Theme.durSlow; easing.type: Easing.InOutSine }
                     NumberAnimation { target: glyph; property: "cellB"; to: 0.6; duration: Theme.durSlow; easing.type: Easing.InOutSine }
@@ -195,38 +189,35 @@ Item {
             anchors.fill: parent
             visible: glyph.kind === "performance"
 
-            // soft glow flare behind the bolt (only visible mid-animation)
             Shape {
                 anchors.fill: parent
                 antialiasing: true
                 opacity: glyph.boltGlow
                 ShapePath {
                     strokeColor: glyph.glyphColor
-                    strokeWidth: 4
+                    strokeWidth: 8
                     fillColor: glyph.softColor(0.35)
                     joinStyle: ShapePath.RoundJoin
                     capStyle: ShapePath.RoundCap
-                    PathSvg { path: "M13 2.5 L4.5 13.5 L10.5 13.5 L9.5 21.5 L18 10.5 L12 10.5 L13 2.5 Z" }
+                    PathSvg { path: "M26 5 L9 27 L21 27 L19 43 L36 21 L24 21 L26 5 Z" }
                 }
             }
 
-            // lightning bolt (static)
             Shape {
                 anchors.fill: parent
                 antialiasing: true
                 ShapePath {
                     strokeColor: glyph.glyphColor
-                    strokeWidth: 1.7
+                    strokeWidth: 3.4
                     fillColor: glyph.softColor(0.22)
                     joinStyle: ShapePath.RoundJoin
-                    PathSvg { path: "M13 2.5 L4.5 13.5 L10.5 13.5 L9.5 21.5 L18 10.5 L12 10.5 L13 2.5 Z" }
+                    PathSvg { path: "M26 5 L9 27 L21 27 L19 43 L36 21 L24 21 L26 5 Z" }
                 }
             }
 
-            // sparks fanning off the bolt
             component Spark: Rectangle {
-                width: 2.2; height: 2.2
-                radius: 0.55
+                width: 4.4; height: 4.4
+                radius: 1.1
                 color: glyph.glyphColor
                 rotation: 45
                 antialiasing: true
@@ -235,9 +226,9 @@ Item {
                 scale: 0.3
             }
 
-            Spark { id: spark1; x: 17.4; y: 4.6 }
-            Spark { id: spark2; x: 18.8; y: 11 }
-            Spark { id: spark3; x: 4;    y: 17.6 }
+            Spark { id: spark1; x: 34.8; y: 9.2 }
+            Spark { id: spark2; x: 37.6; y: 22 }
+            Spark { id: spark3; x: 8;    y: 35.2 }
 
             ParallelAnimation {
                 id: sparkAnim
@@ -281,7 +272,7 @@ Item {
             anchors.fill: parent
             visible: glyph.kind === "extreme"
             transform: Rotation {
-                origin.x: 12; origin.y: 19
+                origin.x: 24; origin.y: 38
                 angle: glyph.leafAngle
             }
 
@@ -290,17 +281,17 @@ Item {
                 antialiasing: true
                 ShapePath {
                     strokeColor: glyph.glyphColor
-                    strokeWidth: 1.7
+                    strokeWidth: 3.4
                     fillColor: glyph.softColor(0.18)
                     joinStyle: ShapePath.RoundJoin
-                    PathSvg { path: "M19.5 4.5 C12 4.5 5.9 7.4 5.4 14.5 C5.2 17.3 7.1 19.5 10 19.5 C17.5 19.5 19.5 12.2 19.5 4.5 Z" }
+                    PathSvg { path: "M39 9 C24 9 11.8 14.8 10.8 29 C10.4 34.6 14.2 39 20 39 C35 39 39 24.4 39 9 Z" }
                 }
                 ShapePath {
                     strokeColor: glyph.softColor(0.7)
-                    strokeWidth: 1.7
+                    strokeWidth: 3.4
                     fillColor: "transparent"
                     capStyle: ShapePath.RoundCap
-                    PathSvg { path: "M7 18.5 C9.5 13.5 12.8 9.8 17 7.5" }
+                    PathSvg { path: "M14 37 C19 27 25.6 19.6 34 15" }
                 }
             }
 

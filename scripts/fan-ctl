@@ -510,6 +510,18 @@ seed_mode() {
             store_gpu="$(preset_data stock gpu)"
             store_en="firmware"
             ;;
+        balanced)
+            # Everyday snappy: stock Armoury-like curve, custom enabled.
+            store_cpu="$(preset_data stock cpu)"
+            store_gpu="$(preset_data stock gpu)"
+            store_en="custom"
+            ;;
+        performance)
+            # All-out: cool preset keeps sustained boost from collapsing.
+            store_cpu="$(preset_data cool cpu)"
+            store_gpu="$(preset_data cool gpu)"
+            store_en="custom"
+            ;;
     esac
 
     write_store "$mode"
@@ -520,10 +532,45 @@ cmd_seed() {
     for m in extreme power balanced performance; do
         seed_mode "$m"
     done
+    migrate_fast_defaults
+}
+
+# One-shot: balanced/performance stores that still hold the quiet
+# (silent-until-72°C) curve get stock/cool. Marker prevents re-clobbering
+# a user who later picks quiet on purpose after the migrate.
+migrate_fast_defaults() {
+    local mode marker quiet_cpu quiet_ext
+    marker="$STORE_DIR/.migrated-fast-defaults"
+    [ -f "$marker" ] && return 0
+    mkdir -p "$STORE_DIR"
+    quiet_cpu="$(preset_data quiet cpu)"
+    quiet_ext="45:0,55:0,62:0,68:0,72:15,80:15,88:15,97:15"
+    for mode in balanced performance; do
+        [ -r "$(store_path "$mode")" ] || continue
+        read_store "$mode" || continue
+        case "$store_cpu" in
+            "$quiet_cpu"|"$quiet_ext") ;;
+            *) continue ;;
+        esac
+        case "$mode" in
+            balanced)
+                store_cpu="$(preset_data stock cpu)"
+                store_gpu="$(preset_data stock gpu)"
+                ;;
+            performance)
+                store_cpu="$(preset_data cool cpu)"
+                store_gpu="$(preset_data cool gpu)"
+                ;;
+        esac
+        store_en="custom"
+        write_store "$mode"
+    done
+    echo 1 > "$marker"
 }
 
 apply_store() {
     local mode="$1"
+    migrate_fast_defaults
     seed_mode "$mode"
     read_store "$mode" || return 1
     pin_asusd_owner

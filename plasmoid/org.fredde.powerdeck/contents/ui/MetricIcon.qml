@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Window
 import org.kde.kirigami as Kirigami
 
 // Canvas-drawn metric icon. Shapes are painted in QML so the color
@@ -21,6 +22,8 @@ Item {
 
     implicitWidth: Kirigami.Units.iconSizes.small
     implicitHeight: Kirigami.Units.iconSizes.small
+
+    readonly property real dpr: Math.max(1, Screen.devicePixelRatio)
 
     // Uniform scale around the 24×24 center. CPU already fills the
     // box; the others sit smaller in the same artboard so they get a bump.
@@ -47,7 +50,12 @@ Item {
 
     Canvas {
         id: cv
-        anchors.fill: parent
+        width: Math.max(1, Math.round(root.width * root.dpr))
+        height: Math.max(1, Math.round(root.height * root.dpr))
+        x: 0
+        y: 0
+        scale: root.width > 0 ? root.width / width : 1
+        transformOrigin: Item.TopLeft
         antialiasing: true
         renderStrategy: Canvas.Cooperative
 
@@ -357,4 +365,5 @@ Item {
     onContentScaleChanged: cv.requestPaint()
     onWidthChanged: cv.requestPaint()
     onHeightChanged: cv.requestPaint()
+    onDprChanged: cv.requestPaint()
 }

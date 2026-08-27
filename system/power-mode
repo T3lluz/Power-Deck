@@ -43,6 +43,22 @@ nvidia_dgpu_awake() {
     done
 }
 
+# Nudge amd-pstate / intel EPP after PPD sets the platform profile.
+# Safe: only writes a preference that the CPU advertises. Never touches
+# the global boost knob (that makes PPD profile switches fail with EINVAL).
+# No-op on kernels / CPUs without energy_performance_preference.
+set_epp() {
+    local pref="$1" f avail
+    [ -n "$pref" ] || return 0
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+        [ -w "$f" ] || continue
+        avail="$(cat "${f%/*}/energy_performance_available_preferences" 2>/dev/null)"
+        case " $avail " in
+            *" $pref "*) echo "$pref" > "$f" 2>/dev/null ;;
+        esac
+    done
+}
+
 # Paths are overridable for the test suite (tests/run-tests.sh); real
 # invocations never set these variables.
 GFX_CONF="${POWER_DECK_GFX_CONF:-/etc/supergfxd.conf}"
@@ -233,6 +249,7 @@ case "$1" in
         nvidia_runtime_pm
         ;;
     normal)
+        # Power Saver desktop extras (PPD still owns EPP via power-saver).
         [ -n "$PANEL" ] && echo 0 > "$PANEL"
         echo default > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
         [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off
@@ -240,17 +257,41 @@ case "$1" in
         # after leaving Performance (which pins it awake).
         nvidia_runtime_pm
         ;;
+    balanced-ac)
+        # Balanced on AC: snappy desktop without waking the dGPU.
+        # PPD's "balanced" often lands on EPP balance_power on amd_pstate;
+        # nudge to balance_performance for faster ramp while the ACPI
+        # platform profile stays balanced (throughput budget).
+        [ -n "$PANEL" ] && echo 0 > "$PANEL"
+        echo default > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
+        [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off
+        nvidia_runtime_pm
+        set_epp balance_performance
+        ;;
+    balanced-batt)
+        # Balanced on battery: keep PPD balanced (not power-saver) for
+        # decent responsiveness, but reclaim Wi-Fi / ASPM savings and
+        # leave the dGPU free to D3cold. Explicit EPP reset matters when
+        # leaving Performance — PPD does not always rewrite EPP on the
+        # balanced hop, and balance_performance would keep draining.
+        [ -n "$PANEL" ] && echo 0 > "$PANEL"
+        echo powersave > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
+        [ -n "$WIFI" ] && iw dev "$WIFI" set power_save on
+        nvidia_runtime_pm
+        set_epp balance_power
+        ;;
     performance)
-        # Same desktop extras as "normal", but keep the dGPU pinned awake
-        # so Hybrid + Performance actually drives apps/games on the dGPU
-        # instead of leaving it runtime-suspended.
+        # All-out: same desktop extras as AC balanced, but pin the dGPU
+        # awake so Hybrid + Performance drives apps/games without wake
+        # latency. EPP performance reinforcer (PPD also sets this).
         [ -n "$PANEL" ] && echo 0 > "$PANEL"
         echo default > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
         [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off
         nvidia_dgpu_awake
+        set_epp performance
         ;;
     *)
-        echo "Usage: $0 extreme|normal|performance|gfx-mode <Mode>|gfx-commit" >&2
+        echo "Usage: $0 extreme|normal|balanced-ac|balanced-batt|performance|gfx-mode <Mode>|gfx-commit" >&2
         exit 1
         ;;
 esac

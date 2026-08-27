@@ -1,6 +1,7 @@
 #!/bin/bash
 # anime-power-watch - keep AC-dependent settings in sync with plug/unplug:
-# the AniMe Matrix display and the panel refresh rate (refresh-ctl auto).
+# AniMe Matrix, panel refresh (refresh-ctl auto), fan curve, and the
+# balanced AC/battery power-mode extras (Wi-Fi / ASPM / EPP).
 # Run by anime-power-sync.service. Listens for power_supply udev events;
 # falls back to polling if udevadm is unavailable.
 
@@ -10,6 +11,8 @@ REFRESH_CTL="$HOME/.local/bin/refresh-ctl"
 [ -x "$REFRESH_CTL" ] || REFRESH_CTL="$(dirname "$0")/refresh-ctl"
 FAN_CTL="$HOME/.local/bin/fan-ctl"
 [ -x "$FAN_CTL" ] || FAN_CTL="$(dirname "$0")/fan-ctl"
+PROFILE_CTL="$HOME/.local/bin/ghelper-profile"
+[ -x "$PROFILE_CTL" ] || PROFILE_CTL="$(dirname "$0")/ghelper-profile"
 
 sync() {
     "$ANIME_CTL" sync >/dev/null 2>&1
@@ -18,6 +21,9 @@ sync() {
     # platform profile on AC/battery; even with that disabled, a late
     # asusd write can otherwise leave the wrong curve applied.
     [ -x "$FAN_CTL" ] && "$FAN_CTL" apply >/dev/null 2>&1 || true
+    # Balanced flips Wi-Fi/ASPM/EPP on plug/unplug; other modes re-assert
+    # their root-helper knobs so a late asusd/PPD write cannot stick.
+    [ -x "$PROFILE_CTL" ] && "$PROFILE_CTL" helper-sync >/dev/null 2>&1 || true
 }
 
 # The udev burst can arrive before the AC adapter's "online" attribute
