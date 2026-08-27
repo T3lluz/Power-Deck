@@ -283,9 +283,10 @@ case "$1" in
     performance)
         # All-out: same desktop extras as AC balanced, but pin the dGPU
         # awake so Hybrid + Performance drives apps/games without wake
-        # latency. EPP performance reinforcer (PPD also sets this).
+        # latency. ASPM performance cuts PCIe powersave latency for the
+        # dGPU. EPP performance reinforcer (PPD also sets this).
         [ -n "$PANEL" ] && echo 0 > "$PANEL"
-        echo default > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
+        echo performance > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
         [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off
         nvidia_dgpu_awake
         set_epp performance

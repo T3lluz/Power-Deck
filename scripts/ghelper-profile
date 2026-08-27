@@ -7,7 +7,8 @@
 # power       power-saver profile, normal extras
 # balanced    balanced profile; AC = snappy extras + EPP balance_performance,
 #             battery = Wi-Fi/ASPM powersave (decent battery, still responsive)
-# performance performance profile, dGPU pinned awake, always-high refresh
+# performance performance profile, dGPU pinned awake, always-high refresh,
+#             ASPM performance
 #
 # Each mode has its own fan curve (fan-ctl). Extreme and Power Saver
 # share the firmware LowPower slot, so the stored curve is rewritten
@@ -59,6 +60,19 @@ pin_asusd_owner() {
         ChangePlatformProfileOnBattery b false >/dev/null 2>&1 || true
 }
 
+# asusd CPUEPP (rog-platform, D-Bus type u):
+#   0 Default, 1 Performance, 2 BalancePerformance, 3 BalancePower, 4 Power
+# With platform_profile_linked_epp, asusd rewrites sysfs EPP from
+# profile_balanced_epp whenever Balanced is live. A sysfs-only nudge
+# from power-mode is not enough — keep the asusd property in sync so
+# asusd cannot overwrite AC balance_performance with BalancePower.
+set_asusd_balanced_epp() {
+    local epp_u="$1"
+    [ -x "$BUSCTL" ] || return 0
+    "$BUSCTL" set-property "$ASUSD_DEST" "$ASUSD_PATH" "$PLAT_IFACE" \
+        ProfileBalancedEpp u "$epp_u" >/dev/null 2>&1 || true
+}
+
 apply_fans() {
     [ -x "$FAN_CTL" ] || return 0
     "$FAN_CTL" apply "$1" >/dev/null 2>&1 || true
@@ -77,8 +91,10 @@ apply_helper() {
             ;;
         balanced)
             if on_ac; then
+                set_asusd_balanced_epp 2
                 sudo -n "$HELPER" balanced-ac
             else
+                set_asusd_balanced_epp 3
                 sudo -n "$HELPER" balanced-batt
             fi
             ;;

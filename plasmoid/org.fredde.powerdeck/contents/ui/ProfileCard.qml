@@ -17,12 +17,12 @@ Item {
     // Prefer the tall tile when the parent rail has room.
     property bool preferTile: true
 
-    readonly property int tileHeight: Math.round(Kirigami.Units.gridUnit * 4.55)
+    readonly property int tileHeight: Math.round(Kirigami.Units.gridUnit * 3.6)
     readonly property bool tileMode: preferTile
-        && height >= Math.round(Kirigami.Units.gridUnit * 3.8)
+        && height >= Math.round(Kirigami.Units.gridUnit * 3.2)
     readonly property int glyphPx: tileMode
-        ? Math.round(Kirigami.Units.gridUnit * 1.95)
-        : Math.round(Kirigami.Units.gridUnit * 1.7)
+        ? Math.round(Kirigami.Units.gridUnit * 1.65)
+        : Math.round(Kirigami.Units.gridUnit * 1.45)
 
     signal clicked()
 
@@ -92,9 +92,9 @@ Item {
         anchors.fill: parent
         anchors.leftMargin: Kirigami.Units.smallSpacing
         anchors.rightMargin: Kirigami.Units.smallSpacing
-        anchors.topMargin: Kirigami.Units.smallSpacing * 1.25
-        anchors.bottomMargin: Kirigami.Units.smallSpacing * 1.25
-        spacing: Kirigami.Units.smallSpacing * 0.5
+        anchors.topMargin: Kirigami.Units.smallSpacing
+        anchors.bottomMargin: Kirigami.Units.smallSpacing
+        spacing: Math.round(Kirigami.Units.smallSpacing * 0.35)
 
         Item { Layout.fillHeight: true }
 

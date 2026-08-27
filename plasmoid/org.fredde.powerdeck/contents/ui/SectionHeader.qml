@@ -20,10 +20,10 @@ RowLayout {
     property bool animeAnimate: true
     default property alias trailing: trailingRow.data
 
-    readonly property int badgeSize: Math.round(Kirigami.Units.gridUnit * 1.55)
+    readonly property int badgeSize: Math.round(Kirigami.Units.gridUnit * 1.3)
 
     Layout.fillWidth: true
-    spacing: Kirigami.Units.smallSpacing * 1.5
+    spacing: Kirigami.Units.smallSpacing
 
     ProfileIconBadge {
         visible: !root.animeGlyph && root.iconSource.toString().length > 0

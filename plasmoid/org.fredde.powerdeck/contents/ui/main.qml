@@ -20,9 +20,11 @@ PlasmoidItem {
         id: cardRoot
         default property alias content: cardColumn.data
 
+        readonly property int pad: Math.round(Kirigami.Units.smallSpacing * 1.5)
+
         Layout.fillWidth: true
-        implicitHeight: cardColumn.implicitHeight + Kirigami.Units.largeSpacing * 2
-        radius: Kirigami.Units.smallSpacing * 1.5
+        implicitHeight: cardColumn.implicitHeight + pad * 2
+        radius: Kirigami.Units.smallSpacing * 1.25
         color: Theme.alpha(Kirigami.Theme.textColor, 0.045)
         border.width: 1
         border.color: Theme.alpha(Kirigami.Theme.textColor, 0.08)
@@ -30,10 +32,10 @@ PlasmoidItem {
 
         ColumnLayout {
             id: cardColumn
-            x: Kirigami.Units.largeSpacing
-            y: Kirigami.Units.largeSpacing
-            width: cardRoot.width - Kirigami.Units.largeSpacing * 2
-            spacing: Kirigami.Units.smallSpacing
+            x: cardRoot.pad
+            y: cardRoot.pad
+            width: cardRoot.width - cardRoot.pad * 2
+            spacing: Math.round(Kirigami.Units.smallSpacing * 0.85)
         }
     }
 
@@ -46,12 +48,12 @@ PlasmoidItem {
         property int watts: -1
         readonly property color heat: Theme.heatColor(temp)
 
-        implicitWidth: pillRow.implicitWidth + Kirigami.Units.largeSpacing * 2
+        implicitWidth: pillRow.implicitWidth + Kirigami.Units.largeSpacing * 1.5
         Layout.fillWidth: false
         Layout.preferredWidth: implicitWidth
         Layout.maximumWidth: implicitWidth
         Layout.alignment: Qt.AlignVCenter
-        Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
+        Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.15)
         radius: height / 2
         color: Theme.alpha(heat, 0.10)
         border.width: 1
@@ -930,14 +932,14 @@ PlasmoidItem {
         // Landscape dashboard: one 2-column grid so every row shares
         // the same gutter. Size to content — never lock height to a
         // fillHeight child or cards collapse and overlap.
-        readonly property int edgeMargin: Kirigami.Units.smallSpacing * 1.5
-        readonly property int gutter: Kirigami.Units.smallSpacing
-        readonly property int railWidth: Kirigami.Units.gridUnit * 18
-        readonly property int popupWidth: Kirigami.Units.gridUnit * 40
+        readonly property int edgeMargin: Kirigami.Units.smallSpacing
+        readonly property int gutter: Math.round(Kirigami.Units.smallSpacing * 0.85)
+        readonly property int railWidth: Kirigami.Units.gridUnit * 15
+        readonly property int popupWidth: Kirigami.Units.gridUnit * 34
 
         Layout.preferredWidth: popupWidth
-        Layout.minimumWidth: Kirigami.Units.gridUnit * 36
-        Layout.maximumWidth: Kirigami.Units.gridUnit * 44
+        Layout.minimumWidth: Kirigami.Units.gridUnit * 30
+        Layout.maximumWidth: Kirigami.Units.gridUnit * 38
         implicitWidth: popupWidth
         implicitHeight: body.implicitHeight + edgeMargin
         Layout.minimumHeight: implicitHeight
@@ -972,8 +974,9 @@ PlasmoidItem {
                 Layout.leftMargin: fullRep.edgeMargin
                 Layout.rightMargin: fullRep.edgeMargin
                 Layout.topMargin: fullRep.edgeMargin
-                implicitHeight: headerCol.implicitHeight + Kirigami.Units.largeSpacing * 2
-                radius: Kirigami.Units.smallSpacing * 1.5
+                readonly property int headerPad: Math.round(Kirigami.Units.smallSpacing * 1.5)
+                implicitHeight: headerCol.implicitHeight + headerPad * 2
+                radius: Kirigami.Units.smallSpacing * 1.25
                 color: Theme.alpha(Kirigami.Theme.textColor, 0.045)
                 border.width: 1
                 border.color: Theme.alpha(Kirigami.Theme.textColor, 0.08)
@@ -981,20 +984,20 @@ PlasmoidItem {
 
                 ColumnLayout {
                     id: headerCol
-                    x: Kirigami.Units.largeSpacing
-                    y: Kirigami.Units.largeSpacing
-                    width: parent.width - Kirigami.Units.largeSpacing * 2
-                    spacing: Kirigami.Units.smallSpacing
+                    x: parent.headerPad
+                    y: parent.headerPad
+                    width: parent.width - parent.headerPad * 2
+                    spacing: Math.round(Kirigami.Units.smallSpacing * 0.75)
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing * 1.5
+                        spacing: Kirigami.Units.smallSpacing
 
                         ProfileGlyph {
                             id: headerBadge
                             kind: glyphKind(currentProfile)
                             glyphColor: dataFor(currentProfile).accent
-                            glyphSize: Math.round(Kirigami.Units.gridUnit * 2.1)
+                            glyphSize: Math.round(Kirigami.Units.gridUnit * 1.7)
                             active: true
                             Layout.preferredWidth: glyphSize
                             Layout.preferredHeight: glyphSize
@@ -1023,7 +1026,7 @@ PlasmoidItem {
                                 text: dataFor(currentProfile).name
                                 color: Kirigami.Theme.textColor
                                 font.weight: Font.Bold
-                                font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.25)
+                                font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.1)
                                 elide: Text.ElideRight
                             }
                         }
@@ -1057,11 +1060,11 @@ PlasmoidItem {
                             readonly property bool charging: root.batteryState === "charging"
                             readonly property color drainColor: Theme.batteryFlowColor(
                                 root.batteryState, root.batteryWatts)
-                            implicitWidth: drawRow.implicitWidth + Kirigami.Units.largeSpacing * 2
+                            implicitWidth: drawRow.implicitWidth + Kirigami.Units.smallSpacing * 2.5
                             Layout.fillWidth: false
                             Layout.preferredWidth: implicitWidth
                             Layout.maximumWidth: implicitWidth
-                            Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
+                            Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.15)
                             Layout.alignment: Qt.AlignVCenter
                             radius: height / 2
                             color: Theme.alpha(drainColor, 0.10)
@@ -1104,8 +1107,8 @@ PlasmoidItem {
                                 : (root.batteryState === "discharging" && root.batteryPercent <= 20) ? Theme.red
                                 : root.onAC ? Theme.green
                                 : Theme.teal
-                            Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
-                            Layout.preferredWidth: batLabel.implicitWidth + Kirigami.Units.largeSpacing * 2
+                            Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.15)
+                            Layout.preferredWidth: batLabel.implicitWidth + Kirigami.Units.smallSpacing * 2.5
                             Layout.alignment: Qt.AlignVCenter
                             radius: height / 2
                             color: Theme.alpha(batColor, 0.12)
@@ -1133,8 +1136,8 @@ PlasmoidItem {
 
                         // live refresh-rate readout
                         Rectangle {
-                            Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
-                            Layout.preferredWidth: hzLabel.implicitWidth + Kirigami.Units.largeSpacing * 2
+                            Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.15)
+                            Layout.preferredWidth: hzLabel.implicitWidth + Kirigami.Units.smallSpacing * 2.5
                             Layout.alignment: Qt.AlignVCenter
                             radius: height / 2
                             color: Theme.alpha(Theme.accent, 0.12)
@@ -1158,8 +1161,8 @@ PlasmoidItem {
                             readonly property bool pressed: fanChipMouse.pressed
                             readonly property color chipAccent: root.fanCustom ? Theme.iconFan : Theme.accent
 
-                            implicitWidth: fanChipRow.implicitWidth + Kirigami.Units.largeSpacing * 1.6
-                            implicitHeight: Math.round(Kirigami.Units.gridUnit * 1.3)
+                            implicitWidth: fanChipRow.implicitWidth + Kirigami.Units.smallSpacing * 2.2
+                            implicitHeight: Math.round(Kirigami.Units.gridUnit * 1.15)
                             Layout.preferredHeight: implicitHeight
                             Layout.preferredWidth: implicitWidth
                             Layout.alignment: Qt.AlignVCenter
@@ -1290,7 +1293,7 @@ PlasmoidItem {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.minimumWidth: Kirigami.Units.gridUnit * 16
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 13
                     spacing: fullRep.gutter
 
                     SectionCard {
@@ -1519,7 +1522,7 @@ PlasmoidItem {
                 SectionCard {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.minimumWidth: Kirigami.Units.gridUnit * 16
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 13
 
                     SectionHeader {
                         title: i18n("CHARGE LIMIT")
@@ -1667,7 +1670,7 @@ PlasmoidItem {
                 SectionCard {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.minimumWidth: Kirigami.Units.gridUnit * 16
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 13
 
                     SectionHeader {
                         title: i18n("IDLE")

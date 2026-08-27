@@ -28,10 +28,10 @@ Power Deck brings GHelper-style laptop controls to KDE Plasma. Scroll the panel 
 |------|---------|--------|
 | Extreme Saver | power-saver | CPU boost off, 60 Hz (auto), Wi-Fi powersave, PCIe ASPM powersave, NVIDIA dGPU runtime suspend (D3cold), near-silent fan curve (fans off until ~72 °C) |
 | Power Saver | power-saver | CPU boost off, normal refresh and peripherals, fan curve firmware by default |
-| Balanced | balanced | On AC: high refresh (auto), Wi-Fi powersave off, ASPM default, EPP nudged to `balance_performance`, stock fan curve. On battery: 60 Hz (auto), Wi-Fi/ASPM powersave on, EPP `balance_power`, dGPU stays free to D3cold |
-| Performance | performance | Always-high refresh (even on battery in auto), Wi-Fi powersave off, ASPM default, EPP `performance`, dGPU pinned awake in Hybrid (D0), cool fan curve for sustained boost |
+| Balanced | balanced | On AC: high refresh (auto), Wi-Fi powersave off, ASPM default, EPP `balance_performance` (sysfs + asusd `ProfileBalancedEpp`), stock fan curve. On battery: 60 Hz (auto), Wi-Fi/ASPM powersave on, EPP `balance_power`, dGPU stays free to D3cold |
+| Performance | performance | Always-high refresh (even on battery in auto), Wi-Fi powersave off, ASPM `performance`, EPP `performance`, dGPU pinned awake in Hybrid (D0), cool fan curve for sustained boost |
 
-CPU boost is managed by `power-profiles-daemon`: the `power-saver` profile (used by both saver modes) disables per-policy boost on amd_pstate automatically. Power Deck never writes the global boost sysfs knob (that makes PPD profile switches fail with `EINVAL`). On Balanced, PPD alone often picks EPP `balance_power` on amd_pstate; the AC helper nudges it to `balance_performance` for snappier ramp while the ACPI platform profile stays balanced. Unplugging (or leaving Performance) resets EPP to `balance_power` so battery life stays sane.
+CPU boost is managed by `power-profiles-daemon`: the `power-saver` profile (used by both saver modes) disables per-policy boost on amd_pstate automatically. Power Deck never writes the global boost sysfs knob (that makes PPD profile switches fail with `EINVAL`). On Balanced, PPD alone often picks EPP `balance_power` on amd_pstate, and asusd's `profile_balanced_epp` defaults to `BalancePower` with `platform_profile_linked_epp` — so a sysfs-only nudge gets overwritten. Power Deck sets asusd `ProfileBalancedEpp` to `BalancePerformance` on AC and `BalancePower` on battery (same plug/unplug path as Wi-Fi/ASPM), then reinforces via sysfs. Unplugging (or leaving Performance) restores battery EPP so drain stays sane.
 
 ### Temperatures and power draw
 

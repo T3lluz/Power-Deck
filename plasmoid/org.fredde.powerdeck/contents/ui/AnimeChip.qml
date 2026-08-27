@@ -35,8 +35,8 @@ Item {
 
     Layout.fillWidth: true
     // never squeeze the longest sibling label against the pill border
-    Layout.minimumWidth: groupLabelWidth + Kirigami.Units.largeSpacing * 2
-    Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.6)
+    Layout.minimumWidth: groupLabelWidth + Kirigami.Units.smallSpacing * 2.5
+    Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 1.35)
     opacity: chipEnabled ? 1.0 : Theme.offOpacity
     Behavior on opacity {
         NumberAnimation { duration: Theme.durMed; easing.type: Theme.easeOut }
